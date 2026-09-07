@@ -534,7 +534,7 @@ export default function PublicCampaignPage() {
                 <text
                   x={textX}
                   y={nameBoxPixelHeight / 2}
-                  textAnchor={textAnchor}
+                  textAnchor={textAnchor as "start" | "middle" | "end" | "inherit"}
                   dominantBaseline="central"
                   textLength={nameBoxPixelWidth}
                   lengthAdjust="spacingAndGlyphs"
