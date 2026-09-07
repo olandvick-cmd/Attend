@@ -51,15 +51,6 @@ type Template = {
   is_active: boolean;
 };
 
-/*
- * This MUST mirror exactly what the campaign builder writes to
- * campaign_templates.canvas_config. Previously this page expected a
- * generic `{ objects: [...] }` array and searched it by name/type
- * heuristics — but the builder never wrote that shape, so the lookup
- * always missed and the page silently fell back to hardcoded default
- * positions. That's why the frame the organizer placed was never where
- * the photo/name actually landed.
- */
 type PhotoConfig = {
   x: number;
   y: number;
@@ -88,10 +79,10 @@ type CanvasConfig = {
 };
 
 type PhotoPosition = {
-  left: number; // % of canvas
-  top: number; // % of canvas
-  width: number; // % of canvas
-  height: number; // % of canvas
+  left: number;
+  top: number;
+  width: number;
+  height: number;
   angle: number;
   shape: "rectangle" | "circle";
 };
@@ -100,7 +91,7 @@ type NamePosition = {
   left: number;
   top: number;
   width: number;
-  fontSize: number; // px, in canvas-resolution units
+  fontSize: number;
   fontFamily: string;
   fontWeight: string | number;
   textAlign: "left" | "center" | "right";
@@ -109,20 +100,39 @@ type NamePosition = {
 };
 
 type PhotoAdjustment = {
-  zoom: number; // 1 = fills the frame (cover), >1 = zoomed in
-  offsetX: number; // fraction of frame width, -1..1 range (clamped tighter in practice)
-  offsetY: number; // fraction of frame height
+  zoom: number;
+  offsetX: number;
+  offsetY: number;
 };
 
 const DEFAULT_ADJUSTMENT: PhotoAdjustment = { zoom: 1, offsetX: 0, offsetY: 0 };
 
 /*
  * =========================================================
- * COVER-FIT MATH — shared by the live preview (CSS) and the
- * final canvas export, so what the attendee sees is exactly
- * what gets downloaded.
+ * HELPER FUNCTIONS
  * =========================================================
  */
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+function drawContain(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  x: number,
+  y: number,
+  w: number,
+  h: number
+) {
+  ctx.drawImage(img, x, y, w, h);
+}
 
 function coverSize(frameW: number, frameH: number, imgW: number, imgH: number, zoom: number) {
   const frameRatio = frameW / frameH;
@@ -196,12 +206,6 @@ export default function PublicCampaignPage() {
     null
   );
 
-  /*
-   * ---------------------------------------------------------
-   * LOAD CAMPAIGN
-   * ---------------------------------------------------------
-   */
-
   useEffect(() => {
     async function loadCampaign() {
       setLoading(true);
@@ -257,12 +261,6 @@ export default function PublicCampaignPage() {
     }
   }, [slug]);
 
-  /*
-   * ---------------------------------------------------------
-   * PHOTO UPLOAD
-   * ---------------------------------------------------------
-   */
-
   function handlePhotoUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -284,8 +282,6 @@ export default function PublicCampaignPage() {
     reader.onload = () => {
       const dataUrl = reader.result as string;
 
-      // Read the image's real pixel dimensions so the cover-fit math
-      // (preview AND export) uses its true aspect ratio.
       const probe = new Image();
       probe.onload = () => {
         setPhotoSize({ width: probe.naturalWidth, height: probe.naturalHeight });
@@ -307,12 +303,6 @@ export default function PublicCampaignPage() {
     reader.readAsDataURL(file);
     event.target.value = "";
   }
-
-  /*
-   * ---------------------------------------------------------
-   * CANVAS CONFIG — read directly, no more guessing
-   * ---------------------------------------------------------
-   */
 
   const canvasConfig = template?.canvas_config;
 
@@ -366,24 +356,11 @@ export default function PublicCampaignPage() {
     };
   }, [canvasConfig, canvasWidth, canvasHeight]);
 
-  // A single-line text box height, derived from font size, used purely
-  // to vertically center the name within its row in both preview & export.
-  const nameHeightPct = ((namePosition.fontSize * 1.3) / canvasHeight) * 100;
-
-  /*
-   * ---------------------------------------------------------
-   * PHOTO DRAG-TO-REPOSITION + ZOOM
-   * ---------------------------------------------------------
-   * The organizer's frame (position/size/shape) is fixed. The attendee
-   * can only pan and zoom their photo *within* that frame.
-   */
+  const nameHeightPct = ((namePosition.fontSize * 1.5) / canvasHeight) * 100;
 
   const clampedAdjustment = useMemo(() => {
     if (!photoSize) return adjustment;
 
-    // Use the frame's aspect ratio only — absolute units cancel out —
-    // so this works identically whether we're reasoning in "percent of
-    // canvas" (preview) or real pixels (export).
     return clampAdjustment(
       adjustment,
       photoPosition.width,
@@ -447,37 +424,46 @@ export default function PublicCampaignPage() {
     dragState.current = null;
   }
 
-  /*
-   * ---------------------------------------------------------
-   * PREVIEW
-   * ---------------------------------------------------------
-   */
-
   function Preview() {
     if (!template) return null;
 
     let photoDrawPct: { width: number; height: number; left: number; top: number } | null = null;
 
     if (photo && photoSize) {
-      const { width, height } = coverSize(
-        photoPosition.width,
-        photoPosition.height,
+      const frameAspect = photoPosition.width / photoPosition.height;
+      const { width: drawW, height: drawH } = coverSize(
+        frameAspect,
+        1,
         photoSize.width,
         photoSize.height,
         clampedAdjustment.zoom
       );
 
-      const left =
-        (photoPosition.width - width) / 2 + clampedAdjustment.offsetX * photoPosition.width;
-      const top =
-        (photoPosition.height - height) / 2 + clampedAdjustment.offsetY * photoPosition.height;
+      const widthPct = (drawW / frameAspect) * 100;
+      const heightPct = drawH * 100;
+
+      const leftPct = (100 - widthPct) / 2 + clampedAdjustment.offsetX * 100;
+      const topPct = (100 - heightPct) / 2 + clampedAdjustment.offsetY * 100;
 
       photoDrawPct = {
-        width: (width / photoPosition.width) * 100,
-        height: (height / photoPosition.height) * 100,
-        left: (left / photoPosition.width) * 100,
-        top: (top / photoPosition.height) * 100,
+        width: widthPct,
+        height: heightPct,
+        left: leftPct,
+        top: topPct,
       };
+    }
+
+    const nameBoxPixelWidth = (namePosition.width / 100) * canvasWidth;
+    const nameBoxPixelHeight = (nameHeightPct / 100) * canvasHeight;
+
+    let textAnchor = "middle";
+    let textX = nameBoxPixelWidth / 2;
+    if (namePosition.textAlign === "left") {
+      textAnchor = "start";
+      textX = 0;
+    } else if (namePosition.textAlign === "right") {
+      textAnchor = "end";
+      textX = nameBoxPixelWidth;
     }
 
     return (
@@ -517,7 +503,7 @@ export default function PublicCampaignPage() {
                   src={photo}
                   alt="Your uploaded photo"
                   draggable={false}
-                  className="pointer-events-none absolute select-none"
+                  className="pointer-events-none absolute max-w-none select-none"
                   style={{
                     left: `${photoDrawPct.left}%`,
                     top: `${photoDrawPct.top}%`,
@@ -532,46 +518,42 @@ export default function PublicCampaignPage() {
           {/* NAME */}
           {name && (
             <div
-              className="absolute flex items-center overflow-hidden px-1"
+              className="absolute overflow-hidden"
               style={{
                 left: `${namePosition.left}%`,
                 top: `${namePosition.top}%`,
                 width: `${namePosition.width}%`,
                 height: `${nameHeightPct}%`,
-                justifyContent:
-                  namePosition.textAlign === "left"
-                    ? "flex-start"
-                    : namePosition.textAlign === "right"
-                    ? "flex-end"
-                    : "center",
-                fontFamily: namePosition.fontFamily,
-                fontWeight: namePosition.fontWeight,
-                color: namePosition.color,
                 transform: namePosition.angle ? `rotate(${namePosition.angle}deg)` : undefined,
               }}
             >
-              <span
-                className="truncate"
-                style={{
-                  fontSize: `clamp(10px, ${(namePosition.fontSize / canvasWidth) * 520}px, ${
-                    namePosition.fontSize
-                  }px)`,
-                }}
+              <svg
+                viewBox={`0 0 ${nameBoxPixelWidth} ${nameBoxPixelHeight}`}
+                className="h-full w-full overflow-visible"
               >
-                {name}
-              </span>
+                <text
+                  x={textX}
+                  y={nameBoxPixelHeight / 2}
+                  textAnchor={textAnchor}
+                  dominantBaseline="central"
+                  textLength={nameBoxPixelWidth}
+                  lengthAdjust="spacingAndGlyphs"
+                  style={{
+                    fontFamily: `${namePosition.fontFamily}, Arial, sans-serif`,
+                    fontWeight: namePosition.fontWeight,
+                    fontSize: `${namePosition.fontSize}px`,
+                    fill: namePosition.color,
+                  }}
+                >
+                  {name}
+                </text>
+              </svg>
             </div>
           )}
         </div>
       </div>
     );
   }
-
-  /*
-   * ---------------------------------------------------------
-   * GENERATE DP
-   * ---------------------------------------------------------
-   */
 
   async function generateDP() {
     if (!campaign || !template) return;
@@ -607,12 +589,6 @@ export default function PublicCampaignPage() {
 
       const design = await loadImage(template.asset_url);
       drawContain(ctx, design, 0, 0, canvasWidth, canvasHeight);
-
-      /*
-       * ATTENDEE PHOTO — frame is fixed by the organizer; zoom/pan are
-       * the attendee's small adjustment, applied identically to how the
-       * preview computed them.
-       */
 
       const attendeePhoto = await loadImage(photo);
 
@@ -654,10 +630,6 @@ export default function PublicCampaignPage() {
 
       ctx.restore();
 
-      /*
-       * ATTENDEE NAME
-       */
-
       const nx = (namePosition.left / 100) * canvasWidth;
       const ny = (namePosition.top / 100) * canvasHeight;
       const nw = (namePosition.width / 100) * canvasWidth;
@@ -680,8 +652,17 @@ export default function PublicCampaignPage() {
       ctx.textBaseline = "middle";
       ctx.fillStyle = namePosition.color;
 
-      const fontSize = Math.max(10, namePosition.fontSize);
-      ctx.font = `${namePosition.fontWeight} ${fontSize}px ${namePosition.fontFamily}, Arial, sans-serif`;
+      let currentFontSize = Math.max(10, namePosition.fontSize);
+      ctx.font = `${namePosition.fontWeight} ${currentFontSize}px ${namePosition.fontFamily}, Arial, sans-serif`;
+
+      const textToDraw = name.trim();
+      let textWidth = ctx.measureText(textToDraw).width;
+
+      while (textWidth > nw && currentFontSize > 10) {
+        currentFontSize -= 1;
+        ctx.font = `${namePosition.fontWeight} ${currentFontSize}px ${namePosition.fontFamily}, Arial, sans-serif`;
+        textWidth = ctx.measureText(textToDraw).width;
+      }
 
       let textX = nx + nw / 2;
       if (textAlign === "left") textX = nx;
@@ -689,7 +670,7 @@ export default function PublicCampaignPage() {
 
       const textY = ny + nh / 2;
 
-      ctx.fillText(name.trim(), textX, textY, nw);
+      ctx.fillText(textToDraw, textX, textY);
 
       ctx.restore();
 
@@ -727,12 +708,6 @@ export default function PublicCampaignPage() {
     }
   }
 
-  /*
-   * ---------------------------------------------------------
-   * DOWNLOAD
-   * ---------------------------------------------------------
-   */
-
   async function downloadDP() {
     if (!generatedImage) return;
 
@@ -764,12 +739,6 @@ export default function PublicCampaignPage() {
     }
   }
 
-  /*
-   * ---------------------------------------------------------
-   * LOADING / ERROR STATES
-   * ---------------------------------------------------------
-   */
-
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-white">
@@ -798,12 +767,6 @@ export default function PublicCampaignPage() {
   }
 
   if (!campaign || !template) return null;
-
-  /*
-   * ---------------------------------------------------------
-   * PAGE
-   * ---------------------------------------------------------
-   */
 
   return (
     <main className="min-h-screen bg-white">
@@ -980,39 +943,44 @@ export default function PublicCampaignPage() {
                 <button
                   type="button"
                   onClick={generateDP}
-                  disabled={generating}
-                  className="mt-6 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={generating || !photo || !name.trim()}
+                  className="mt-6 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-violet-600 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {generating ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Generating...
+                      Generating DP...
                     </>
                   ) : (
                     <>
                       <Sparkles className="h-4 w-4" />
-                      Generate my DP
+                      Generate DP
                     </>
                   )}
                 </button>
               ) : (
-                <div className="mt-6 space-y-2">
+                <div className="mt-6 space-y-3">
                   <button
                     type="button"
                     onClick={downloadDP}
-                    className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
+                    className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-violet-600 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
                   >
-                    {downloaded ? <Check className="h-4 w-4" /> : <ArrowDownToLine className="h-4 w-4" />}
-                    {downloaded ? "Downloaded" : "Download my DP"}
+                    {downloaded ? (
+                      <>
+                        <Check className="h-4 w-4" />
+                        Downloaded
+                      </>
+                    ) : (
+                      <>
+                        <ArrowDownToLine className="h-4 w-4" />
+                        Download DP
+                      </>
+                    )}
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => {
-                      setGeneratedImage(null);
-                      setDownloaded(false);
-                      setError("");
-                    }}
+                    onClick={() => setGeneratedImage(null)}
                     className="h-11 w-full rounded-xl border border-neutral-200 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50"
                   >
                     Make another
@@ -1020,6 +988,7 @@ export default function PublicCampaignPage() {
                 </div>
               )}
 
+              {/* PRIVACY */}
               <p className="mt-5 text-center text-[11px] leading-5 text-neutral-400">
                 No account required. Your photo is processed in your browser.
               </p>
@@ -1029,52 +998,4 @@ export default function PublicCampaignPage() {
       </div>
     </main>
   );
-}
-
-/*
- * =========================================================
- * IMAGE LOADER
- * =========================================================
- */
-
-function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.crossOrigin = "anonymous";
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("Could not load the campaign design."));
-    image.src = src;
-  });
-}
-
-/*
- * =========================================================
- * DRAW CONTAIN — full campaign artwork, aspect preserved
- * =========================================================
- */
-
-function drawContain(
-  ctx: CanvasRenderingContext2D,
-  image: HTMLImageElement,
-  x: number,
-  y: number,
-  width: number,
-  height: number
-) {
-  const imageRatio = image.width / image.height;
-  const boxRatio = width / height;
-
-  let drawWidth = width;
-  let drawHeight = height;
-
-  if (imageRatio > boxRatio) {
-    drawHeight = width / imageRatio;
-  } else {
-    drawWidth = height * imageRatio;
-  }
-
-  const drawX = x + (width - drawWidth) / 2;
-  const drawY = y + (height - drawHeight) / 2;
-
-  ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
 }

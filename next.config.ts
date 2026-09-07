@@ -3,6 +3,14 @@ import withPWA from "@ducanh2912/next-pwa";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "**.supabase.co", // Permits image rendering from any Supabase Storage bucket
+      },
+    ],
+  },
 };
 
 export default withPWA({

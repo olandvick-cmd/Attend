@@ -4,11 +4,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
-  CalendarDays,
   Globe,
   ImagePlus,
   Loader2,
-  MapPin,
   Type,
   X,
 } from "lucide-react";
@@ -75,9 +73,7 @@ export default function CreateEventPage() {
     loadCategories();
   }, [supabase]);
 
-  function handleCoverChange(
-    e: React.ChangeEvent<HTMLInputElement>
-  ) {
+  function handleCoverChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
 
     if (!file) return;
@@ -151,9 +147,9 @@ export default function CreateEventPage() {
         country: isOnline ? null : country || null,
         is_online: isOnline,
         online_url: isOnline ? onlineUrl || null : null,
-        status: "draft",
+        status: "published",
       })
-      .select("id")
+      .select("id, title")
       .single();
 
     if (eventError || !event) {
@@ -168,7 +164,6 @@ export default function CreateEventPage() {
      */
     if (cover) {
       const extension = cover.name.split(".").pop() || "jpg";
-
       const filePath = `${user.id}/${event.id}/cover.${extension}`;
 
       const { error: uploadError } = await supabase.storage
@@ -182,7 +177,6 @@ export default function CreateEventPage() {
       if (uploadError) {
         console.error(uploadError);
 
-        // Remove the event if its required cover upload fails.
         await supabase
           .from("events")
           .delete()
@@ -193,18 +187,12 @@ export default function CreateEventPage() {
         return;
       }
 
-      /*
-       * Get public URL.
-       */
       const {
         data: { publicUrl },
       } = supabase.storage
         .from("event-covers")
         .getPublicUrl(filePath);
 
-      /*
-       * Save cover URL to event.
-       */
       const { error: updateError } = await supabase
         .from("events")
         .update({
@@ -230,13 +218,22 @@ export default function CreateEventPage() {
       }
     }
 
+    /*
+     * Dispatch event creation notification
+     */
+    await supabase.from("notifications").insert({
+      user_id: user.id,
+      title: "Event Created",
+      message: `Your event "${event.title}" has been successfully created.`,
+      type: "event",
+    });
+
     router.push(`/events/${event.id}`);
   }
 
   return (
     <main className="min-h-[calc(100vh-4rem)] bg-neutral-50 px-5 py-10 sm:px-6">
       <div className="mx-auto max-w-3xl">
-
         <div className="mb-8">
           <p className="text-sm font-semibold text-violet-600">
             CREATE
@@ -256,7 +253,6 @@ export default function CreateEventPage() {
           className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm sm:p-8"
         >
           <div className="space-y-7">
-
             {/* COVER */}
             <div>
               <label className="mb-2 block text-sm font-medium">

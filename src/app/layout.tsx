@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { AppShell } from "@/components/navigation/app-shell";
 import "./globals.css";
+import GoogleAnalytics from "@/components/analytics/google-analytics";
 
 export const metadata: Metadata = {
   title: "Attend — Discover. Create. Share.",
@@ -26,6 +27,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="antialiased">
+      <GoogleAnalytics />
         <AppShell>{children}</AppShell>
       </body>
     </html>
