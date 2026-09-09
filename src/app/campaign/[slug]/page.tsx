@@ -244,10 +244,16 @@ export default function PublicCampaignPage() {
 
         setTemplate(templateData as Template);
 
-        await supabase
-          .from("campaigns")
-          .update({ views: (campaignData.views || 0) + 1 })
-          .eq("id", campaignData.id);
+        const { error: viewError } = await supabase.rpc(
+          "increment_campaign_views",
+          {
+            campaign_uuid: campaignData.id,
+          }
+        );
+
+        if (viewError) {
+          console.warn("View tracking failed:", viewError);
+        }
       } catch (err: any) {
         console.error("Campaign loading error:", err);
         setError(err?.message || "Unable to load this campaign.");
@@ -646,7 +652,11 @@ export default function PublicCampaignPage() {
       }
 
       const textAlign =
-        namePosition.textAlign === "left" ? "left" : namePosition.textAlign === "right" ? "right" : "center";
+        namePosition.textAlign === "left"
+          ? "left"
+          : namePosition.textAlign === "right"
+            ? "right"
+            : "center";
 
       ctx.textAlign = textAlign;
       ctx.textBaseline = "middle";
@@ -686,19 +696,22 @@ export default function PublicCampaignPage() {
 
       setGeneratedImage(result);
 
-      const nextGenerations = (campaign.generations || 0) + 1;
-      const nextParticipants = Math.max(campaign.participants || 0, 1);
+      const { error: generationError } = await supabase.rpc(
+        "increment_campaign_generation",
+        {
+          campaign_uuid: campaign.id,
+        }
+      );
 
-      const { error: analyticsError } = await supabase
-        .from("campaigns")
-        .update({ generations: nextGenerations, participants: nextParticipants })
-        .eq("id", campaign.id);
-
-      if (analyticsError) {
-        console.warn("Analytics update failed:", analyticsError);
+      if (generationError) {
+        console.warn("Generation tracking failed:", generationError);
+      } else {
+        setCampaign({
+          ...campaign,
+          generations: (campaign.generations || 0) + 1,
+          participants: (campaign.participants || 0) + 1,
+        });
       }
-
-      setCampaign({ ...campaign, generations: nextGenerations, participants: nextParticipants });
     } catch (err: any) {
       console.error("DP generation failed:", err);
       setGeneratedImage(null);
@@ -721,17 +734,21 @@ export default function PublicCampaignPage() {
       setDownloaded(true);
 
       if (campaign) {
-        const nextDownloads = (campaign.downloads || 0) + 1;
-        const { error: downloadError } = await supabase
-          .from("campaigns")
-          .update({ downloads: nextDownloads })
-          .eq("id", campaign.id);
+        const { error: downloadError } = await supabase.rpc(
+          "increment_campaign_download",
+          {
+            campaign_uuid: campaign.id,
+          }
+        );
 
         if (downloadError) {
           console.warn("Download analytics failed:", downloadError);
+        } else {
+          setCampaign({
+            ...campaign,
+            downloads: (campaign.downloads || 0) + 1,
+          });
         }
-
-        setCampaign({ ...campaign, downloads: nextDownloads });
       }
     } catch (err) {
       console.error("Download failed:", err);
