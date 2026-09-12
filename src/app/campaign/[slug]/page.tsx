@@ -17,6 +17,7 @@ import {
   Loader2,
   Move,
   RotateCcw,
+  Share2,
   Sparkles,
   UserRound,
   ZoomIn,
@@ -361,6 +362,9 @@ export default function PublicCampaignPage() {
   const [downloaded, setDownloaded] =
     useState(false);
 
+  const [sharing, setSharing] = useState(false);
+  const [shared, setShared] = useState(false);
+
   const visitorIdRef = useRef<string | null>(null);
 
   const trafficSourceRef =
@@ -396,7 +400,7 @@ export default function PublicCampaignPage() {
       campaignId: string,
       eventType:
         | "view"
-        | "generation"
+        | "generate"
         | "download"
         | "share",
       sharePlatform?: string,
@@ -408,16 +412,15 @@ export default function PublicCampaignPage() {
         await supabase.rpc(
           "track_campaign_event",
           {
-            p_campaign_id: campaignId,
-            p_event_type: eventType,
-            p_visitor_id: visitorId,
-            p_metadata: {
-              traffic_source:
-                trafficSourceRef.current,
-              share_platform:
-                sharePlatform ?? null,
-              ...(metadata ?? {}),
-            },
+            campaign_uuid: campaignId,
+            visitor_uuid: visitorId,
+            event_name: eventType,
+            traffic_source:
+              trafficSourceRef.current,
+            share_network:
+              sharePlatform ?? null,
+            event_metadata:
+              metadata ?? {},
           }
         );
 
@@ -497,19 +500,11 @@ export default function PublicCampaignPage() {
           templateData as Template
         );
 
-        /*
-         * Determine where this visitor came from
-         * before recording the view.
-         */
         trafficSourceRef.current =
           getCampaignTrafficSource(
             campaignData.id
           );
 
-        /*
-         * Keep the existing direct campaign update.
-         * Other pages can continue using campaigns.views.
-         */
         const nextViews =
           (campaignData.views || 0) + 1;
 
@@ -537,9 +532,6 @@ export default function PublicCampaignPage() {
           );
         }
 
-        /*
-         * Detailed visitor analytics.
-         */
         if (!viewTrackedRef.current) {
           viewTrackedRef.current = true;
 
@@ -629,6 +621,7 @@ export default function PublicCampaignPage() {
         setGeneratedImage(null);
 
         setDownloaded(false);
+        setShared(false);
       };
 
       probe.onerror = () => {
@@ -1155,6 +1148,7 @@ export default function PublicCampaignPage() {
     setGenerating(true);
     setGeneratedImage(null);
     setDownloaded(false);
+    setShared(false);
 
     try {
       const canvas =
@@ -1437,18 +1431,7 @@ export default function PublicCampaignPage() {
         );
       }
 
-      /*
-       * Show the generated image first.
-       */
       setGeneratedImage(result);
-
-      /*
-       * ===================================================
-       * KEEP EXISTING DIRECT CAMPAIGN UPDATES
-       * ===================================================
-       *
-       * Other Attend pages already consume these values.
-       */
 
       const nextGenerations =
         (campaign.generations || 0) +
@@ -1494,15 +1477,9 @@ export default function PublicCampaignPage() {
           : current
       );
 
-      /*
-       * ===================================================
-       * DETAILED VISITOR ANALYTICS
-       * ===================================================
-       */
-
       await trackCampaignEvent(
         campaign.id,
-        "generation",
+        "generate",
         undefined,
         {
           page: "public_campaign",
@@ -1556,10 +1533,6 @@ export default function PublicCampaignPage() {
       setDownloaded(true);
 
       if (campaign) {
-        /*
-         * Keep existing direct campaign update.
-         */
-
         const nextDownloads =
           (campaign.downloads || 0) +
           1;
@@ -1594,10 +1567,6 @@ export default function PublicCampaignPage() {
             : current
         );
 
-        /*
-         * Detailed visitor analytics.
-         */
-
         await trackCampaignEvent(
           campaign.id,
           "download",
@@ -1617,6 +1586,72 @@ export default function PublicCampaignPage() {
       setError(
         "Could not download the image. Please try again."
       );
+    }
+  }
+
+  /*
+   * =======================================================
+   * SHARE GENERATED IMAGE
+   * =======================================================
+   */
+
+  async function shareGeneratedImage() {
+    if (!generatedImage || !campaign) return;
+
+    setSharing(true);
+
+    try {
+      // Convert dataURL to Blob / File object
+      const res = await fetch(generatedImage);
+      const blob = await res.blob();
+      const file = new File([blob], `${slug}-attend-dp.png`, {
+        type: "image/png",
+      });
+
+      // Standard Web Share API with File payload
+      if (
+        navigator.canShare &&
+        navigator.canShare({ files: [file] })
+      ) {
+        await navigator.share({
+          files: [file],
+          title: campaign.title,
+          text: `Check out my personalized DP for ${campaign.title}!`,
+        });
+      } else if (navigator.share) {
+        // Fallback Web Share for text/URL
+        await navigator.share({
+          title: campaign.title,
+          text: `I'm attending ${campaign.title}! Create yours here:`,
+          url: window.location.href,
+        });
+      } else {
+        // Fallback for browsers with no Web Share support: Trigger download
+        await downloadDP();
+      }
+
+      setShared(true);
+
+      const nextShares = (campaign.shares || 0) + 1;
+
+      await supabase
+        .from("campaigns")
+        .update({ shares: nextShares })
+        .eq("id", campaign.id);
+
+      setCampaign((current) =>
+        current ? { ...current, shares: nextShares } : current
+      );
+
+      await trackCampaignEvent(campaign.id, "share", "native_share", {
+        slug: campaign.slug,
+      });
+    } catch (err: any) {
+      if (err.name !== "AbortError") {
+        console.warn("Share failed:", err);
+      }
+    } finally {
+      setSharing(false);
     }
   }
 
@@ -1902,6 +1937,7 @@ export default function PublicCampaignPage() {
                       );
 
                       setDownloaded(false);
+                      setShared(false);
 
                       setError("");
                     }}
@@ -1967,11 +2003,38 @@ export default function PublicCampaignPage() {
 
                   <button
                     type="button"
+                    onClick={
+                      shareGeneratedImage
+                    }
+                    disabled={sharing}
+                    className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-neutral-200 bg-white text-sm font-semibold text-neutral-800 shadow-sm transition hover:bg-neutral-50 disabled:opacity-60"
+                  >
+                    {sharing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Sharing...
+                      </>
+                    ) : shared ? (
+                      <>
+                        <Check className="h-4 w-4 text-emerald-600" />
+                        Shared
+                      </>
+                    ) : (
+                      <>
+                        <Share2 className="h-4 w-4 text-violet-600" />
+                        Share Image
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => {
                       setGeneratedImage(
                         null
                       );
                       setDownloaded(false);
+                      setShared(false);
                     }}
                     className="h-11 w-full rounded-xl border border-neutral-200 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50"
                   >

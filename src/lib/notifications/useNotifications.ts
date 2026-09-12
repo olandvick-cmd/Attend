@@ -1,37 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-
+import { createClient } from "@/lib/supabase/client";
 import {
   getNotifications,
   getUnreadNotificationCount,
   markAllNotificationsRead,
   markNotificationRead,
 } from "@/lib/notifications/client";
-
 import type {
   Notification,
   NotificationFilter,
 } from "@/lib/notifications/types";
 
-import { createClient } from "@/lib/supabase/client";
+export function useNotifications(filter: NotificationFilter = "all") {
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadCount, setUnreadCount] = useState<number>(0);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
 
-const supabase = createClient();
-
-export function useNotifications(
-  filter: NotificationFilter = "all"
-) {
-  const [notifications, setNotifications] =
-    useState<Notification[]>([]);
-
-  const [unreadCount, setUnreadCount] =
-    useState(0);
-
-  const [loading, setLoading] =
-    useState(true);
-
-  const [error, setError] =
-    useState<string | null>(null);
+  const supabase = createClient();
 
   const loadNotifications = useCallback(async () => {
     try {
@@ -55,56 +43,39 @@ export function useNotifications(
 
   useEffect(() => {
     loadNotifications();
-  }, [loadNotifications]);
 
-  useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null;
-
-    const setupRealtime = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      channel = supabase
-        .channel(`notifications:${user.id}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "notifications",
-            filter: `user_id=eq.${user.id}`,
-          },
-          () => {
-            loadNotifications();
-          }
-        )
-        .subscribe();
-    };
-
-    setupRealtime();
+    // Set up Realtime listener on the notifications table
+    const channel = supabase
+      .channel("realtime-notifications")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "notifications",
+        },
+        (payload) => {
+          const newNotif = payload.new as Notification;
+          setNotifications((prev) => [newNotif, ...prev]);
+          setUnreadCount((prev) => prev + 1);
+        }
+      )
+      .subscribe();
 
     return () => {
-      if (channel) {
-        supabase.removeChannel(channel);
-      }
+      supabase.removeChannel(channel);
     };
-  }, [loadNotifications]);
+  }, [loadNotifications, supabase]);
 
   const markRead = useCallback(
     async (id: string) => {
-      const notification = notifications.find(
-        (item) => item.id === id
-      );
+      const notification = notifications.find((item) => item.id === id);
 
       if (!notification || notification.status === "read") {
         return;
       }
 
       const success = await markNotificationRead(id);
-
       if (!success) return;
 
       setNotifications((current) =>
@@ -113,34 +84,26 @@ export function useNotifications(
             ? {
                 ...item,
                 status: "read",
-                read_at:
-                  item.read_at ??
-                  new Date().toISOString(),
+                read_at: item.read_at ?? new Date().toISOString(),
               }
             : item
         )
       );
 
-      setUnreadCount((count) =>
-        Math.max(0, count - 1)
-      );
+      setUnreadCount((count) => Math.max(0, count - 1));
     },
     [notifications]
   );
 
   const markAllRead = useCallback(async () => {
-    const count =
-      await markAllNotificationsRead();
-
+    const count = await markAllNotificationsRead();
     if (count <= 0) return;
 
     setNotifications((current) =>
       current.map((item) => ({
         ...item,
         status: "read",
-        read_at:
-          item.read_at ??
-          new Date().toISOString(),
+        read_at: item.read_at ?? new Date().toISOString(),
       }))
     );
 

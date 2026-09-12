@@ -2,13 +2,15 @@
 
 import Script from "next/script";
 
-const GA_ID = "G-KDZBKLP6HK";
-
 export default function GoogleAnalytics() {
+  const gaId = process.env.NEXT_PUBLIC_GA_ID;
+
+  if (!gaId) return null;
+
   return (
     <>
       <Script
-        src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`}
+        src={`https://www.googletagmanager.com/gtag/js?id=${gaId}`}
         strategy="afterInteractive"
       />
 
@@ -17,7 +19,7 @@ export default function GoogleAnalytics() {
           window.dataLayer = window.dataLayer || [];
           function gtag(){window.dataLayer.push(arguments);}
           gtag('js', new Date());
-          gtag('config', '${GA_ID}');
+          gtag('config', '${gaId}');
         `}
       </Script>
     </>

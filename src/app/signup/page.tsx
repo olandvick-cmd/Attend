@@ -41,7 +41,7 @@ export default function SignupPage() {
     }
 
     setMessage(
-      "Account created. Check your email if email confirmation is enabled."
+      "Account created. Check your email."
     );
 
     setLoading(false);
