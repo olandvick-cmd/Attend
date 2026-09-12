@@ -48,7 +48,18 @@ export default function CreateEventPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    async function loadCategories() {
+    async function initPage() {
+      // Check authentication first on load
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.push("/login");
+        return;
+      }
+
+      // Load categories if authenticated
       const { data, error } = await supabase
         .from("event_categories")
         .select("id, name, slug")
@@ -70,8 +81,8 @@ export default function CreateEventPage() {
       setLoadingCategories(false);
     }
 
-    loadCategories();
-  }, [supabase]);
+    initPage();
+  }, [supabase, router]);
 
   function handleCoverChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -127,9 +138,6 @@ export default function CreateEventPage() {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)/g, "")}-${Date.now()}`;
 
-    /*
-     * Create the event first.
-     */
     const { data: event, error: eventError } = await supabase
       .from("events")
       .insert({
@@ -159,9 +167,6 @@ export default function CreateEventPage() {
       return;
     }
 
-    /*
-     * Upload cover image if one was selected.
-     */
     if (cover) {
       const extension = cover.name.split(".").pop() || "jpg";
       const filePath = `${user.id}/${event.id}/cover.${extension}`;
@@ -218,9 +223,6 @@ export default function CreateEventPage() {
       }
     }
 
-    /*
-     * Dispatch event creation notification
-     */
     await supabase.from("notifications").insert({
       user_id: user.id,
       title: "Event Created",
