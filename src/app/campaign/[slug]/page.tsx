@@ -24,6 +24,29 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
+type TrafficSource =
+  | "discover"
+  | "whatsapp"
+  | "facebook"
+  | "x"
+  | "instagram"
+  | "telegram"
+  | "email"
+  | "direct"
+  | "other";
+
+const VALID_TRAFFIC_SOURCES: TrafficSource[] = [
+  "discover",
+  "whatsapp",
+  "facebook",
+  "x",
+  "instagram",
+  "telegram",
+  "email",
+  "direct",
+  "other",
+];
+
 type Campaign = {
   id: string;
   event_id: string;
@@ -105,20 +128,96 @@ type PhotoAdjustment = {
   offsetY: number;
 };
 
-const DEFAULT_ADJUSTMENT: PhotoAdjustment = { zoom: 1, offsetX: 0, offsetY: 0 };
+const DEFAULT_ADJUSTMENT: PhotoAdjustment = {
+  zoom: 1,
+  offsetX: 0,
+  offsetY: 0,
+};
 
 /*
  * =========================================================
- * HELPER FUNCTIONS
+ * ANALYTICS HELPERS
+ * =========================================================
+ */
+
+function getVisitorId(): string {
+  const storageKey = "attend_visitor_id";
+
+  try {
+    const existing = window.localStorage.getItem(storageKey);
+
+    if (existing) {
+      return existing;
+    }
+
+    const newId = crypto.randomUUID();
+
+    window.localStorage.setItem(storageKey, newId);
+
+    return newId;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
+function getCampaignTrafficSource(
+  campaignId: string
+): TrafficSource {
+  const storageKey = `attend_campaign_source_${campaignId}`;
+
+  try {
+    const params = new URLSearchParams(window.location.search);
+
+    const querySource =
+      params.get("source")?.trim().toLowerCase() ||
+      params.get("utm_source")?.trim().toLowerCase();
+
+    if (
+      querySource &&
+      VALID_TRAFFIC_SOURCES.includes(
+        querySource as TrafficSource
+      )
+    ) {
+      const source = querySource as TrafficSource;
+
+      window.sessionStorage.setItem(storageKey, source);
+
+      return source;
+    }
+
+    const savedSource =
+      window.sessionStorage.getItem(storageKey);
+
+    if (
+      savedSource &&
+      VALID_TRAFFIC_SOURCES.includes(
+        savedSource as TrafficSource
+      )
+    ) {
+      return savedSource as TrafficSource;
+    }
+  } catch {
+    // Ignore storage errors.
+  }
+
+  return "direct";
+}
+
+/*
+ * =========================================================
+ * IMAGE HELPERS
  * =========================================================
  */
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
+
     img.crossOrigin = "anonymous";
+
     img.onload = () => resolve(img);
     img.onerror = reject;
+
     img.src = src;
   });
 }
@@ -134,7 +233,13 @@ function drawContain(
   ctx.drawImage(img, x, y, w, h);
 }
 
-function coverSize(frameW: number, frameH: number, imgW: number, imgH: number, zoom: number) {
+function coverSize(
+  frameW: number,
+  frameH: number,
+  imgW: number,
+  imgH: number,
+  zoom: number
+) {
   const frameRatio = frameW / frameH;
   const imgRatio = imgW / imgH;
 
@@ -149,13 +254,27 @@ function coverSize(frameW: number, frameH: number, imgW: number, imgH: number, z
     baseHeight = frameW / imgRatio;
   }
 
-  return { width: baseWidth * zoom, height: baseHeight * zoom };
+  return {
+    width: baseWidth * zoom,
+    height: baseHeight * zoom,
+  };
 }
 
-function maxOffset(frameW: number, frameH: number, drawW: number, drawH: number) {
+function maxOffset(
+  frameW: number,
+  frameH: number,
+  drawW: number,
+  drawH: number
+) {
   return {
-    x: Math.max(0, (drawW - frameW) / (2 * frameW)),
-    y: Math.max(0, (drawH - frameH) / (2 * frameH)),
+    x: Math.max(
+      0,
+      (drawW - frameW) / (2 * frameW)
+    ),
+    y: Math.max(
+      0,
+      (drawH - frameH) / (2 * frameH)
+    ),
   };
 }
 
@@ -166,13 +285,31 @@ function clampAdjustment(
   imgW: number,
   imgH: number
 ): PhotoAdjustment {
-  const { width, height } = coverSize(frameW, frameH, imgW, imgH, adjustment.zoom);
-  const bounds = maxOffset(frameW, frameH, width, height);
+  const { width, height } = coverSize(
+    frameW,
+    frameH,
+    imgW,
+    imgH,
+    adjustment.zoom
+  );
+
+  const bounds = maxOffset(
+    frameW,
+    frameH,
+    width,
+    height
+  );
 
   return {
     zoom: adjustment.zoom,
-    offsetX: Math.min(bounds.x, Math.max(-bounds.x, adjustment.offsetX)),
-    offsetY: Math.min(bounds.y, Math.max(-bounds.y, adjustment.offsetY)),
+    offsetX: Math.min(
+      bounds.x,
+      Math.max(-bounds.x, adjustment.offsetX)
+    ),
+    offsetY: Math.min(
+      bounds.y,
+      Math.max(-bounds.y, adjustment.offsetY)
+    ),
   };
 }
 
@@ -184,27 +321,121 @@ function clampAdjustment(
 
 export default function PublicCampaignPage() {
   const params = useParams();
+
   const slug = params.slug as string;
+
   const supabase = createClient();
 
-  const [campaign, setCampaign] = useState<Campaign | null>(null);
-  const [template, setTemplate] = useState<Template | null>(null);
+  const [campaign, setCampaign] =
+    useState<Campaign | null>(null);
+
+  const [template, setTemplate] =
+    useState<Template | null>(null);
+
   const [loading, setLoading] = useState(true);
+
   const [error, setError] = useState("");
 
-  const [photo, setPhoto] = useState<string | null>(null);
-  const [photoSize, setPhotoSize] = useState<{ width: number; height: number } | null>(null);
-  const [adjustment, setAdjustment] = useState<PhotoAdjustment>(DEFAULT_ADJUSTMENT);
+  const [photo, setPhoto] =
+    useState<string | null>(null);
+
+  const [photoSize, setPhotoSize] =
+    useState<{
+      width: number;
+      height: number;
+    } | null>(null);
+
+  const [adjustment, setAdjustment] =
+    useState<PhotoAdjustment>(
+      DEFAULT_ADJUSTMENT
+    );
 
   const [name, setName] = useState("");
-  const [generating, setGenerating] = useState(false);
-  const [generatedImage, setGeneratedImage] = useState<string | null>(null);
-  const [downloaded, setDownloaded] = useState(false);
 
-  const frameRef = useRef<HTMLDivElement | null>(null);
-  const dragState = useRef<{ startX: number; startY: number; startOffset: PhotoAdjustment } | null>(
-    null
+  const [generating, setGenerating] =
+    useState(false);
+
+  const [generatedImage, setGeneratedImage] =
+    useState<string | null>(null);
+
+  const [downloaded, setDownloaded] =
+    useState(false);
+
+  const visitorIdRef = useRef<string | null>(null);
+
+  const trafficSourceRef =
+    useRef<TrafficSource>("direct");
+
+  const viewTrackedRef = useRef(false);
+
+  const frameRef =
+    useRef<HTMLDivElement | null>(null);
+
+  const dragState = useRef<{
+    startX: number;
+    startY: number;
+    startOffset: PhotoAdjustment;
+  } | null>(null);
+
+  /*
+   * =======================================================
+   * VISITOR TRACKING
+   * =======================================================
+   */
+
+  const getCurrentVisitorId = useCallback(() => {
+    if (!visitorIdRef.current) {
+      visitorIdRef.current = getVisitorId();
+    }
+
+    return visitorIdRef.current;
+  }, []);
+
+  const trackCampaignEvent = useCallback(
+    async (
+      campaignId: string,
+      eventType:
+        | "view"
+        | "generation"
+        | "download"
+        | "share",
+      sharePlatform?: string,
+      metadata?: Record<string, unknown>
+    ) => {
+      const visitorId = getCurrentVisitorId();
+
+      const { error: trackingError } =
+        await supabase.rpc(
+          "track_campaign_event",
+          {
+            p_campaign_id: campaignId,
+            p_event_type: eventType,
+            p_visitor_id: visitorId,
+            p_metadata: {
+              traffic_source:
+                trafficSourceRef.current,
+              share_platform:
+                sharePlatform ?? null,
+              ...(metadata ?? {}),
+            },
+          }
+        );
+
+      if (trackingError) {
+        console.warn(
+          `Campaign ${eventType} tracking failed:`,
+          trackingError
+        );
+      }
+    },
+    [getCurrentVisitorId, supabase]
   );
+
+  /*
+   * =======================================================
+   * LOAD CAMPAIGN
+   * =======================================================
+   */
 
   useEffect(() => {
     async function loadCampaign() {
@@ -212,7 +443,10 @@ export default function PublicCampaignPage() {
       setError("");
 
       try {
-        const { data: campaignData, error: campaignError } = await supabase
+        const {
+          data: campaignData,
+          error: campaignError,
+        } = await supabase
           .from("campaigns")
           .select("*")
           .eq("slug", slug)
@@ -220,43 +454,115 @@ export default function PublicCampaignPage() {
           .single();
 
         if (campaignError || !campaignData) {
-          throw new Error("This campaign does not exist or is no longer available.");
+          throw new Error(
+            "This campaign does not exist or is no longer available."
+          );
         }
 
-        setCampaign(campaignData as Campaign);
+        const typedCampaign =
+          campaignData as Campaign;
 
-        const { data: templateData, error: templateError } = await supabase
+        setCampaign(typedCampaign);
+
+        const {
+          data: templateData,
+          error: templateError,
+        } = await supabase
           .from("campaign_templates")
           .select("*")
-          .eq("campaign_id", campaignData.id)
+          .eq(
+            "campaign_id",
+            campaignData.id
+          )
           .eq("is_active", true)
-          .order("version", { ascending: false })
+          .order("version", {
+            ascending: false,
+          })
           .limit(1)
           .maybeSingle();
 
         if (templateError) {
-          throw new Error(templateError.message);
+          throw new Error(
+            templateError.message
+          );
         }
 
         if (!templateData) {
-          throw new Error("This campaign does not have a design yet.");
+          throw new Error(
+            "This campaign does not have a design yet."
+          );
         }
 
-        setTemplate(templateData as Template);
-
-        const { error: viewError } = await supabase.rpc(
-          "increment_campaign_views",
-          {
-            campaign_uuid: campaignData.id,
-          }
+        setTemplate(
+          templateData as Template
         );
 
-        if (viewError) {
-          console.warn("View tracking failed:", viewError);
+        /*
+         * Determine where this visitor came from
+         * before recording the view.
+         */
+        trafficSourceRef.current =
+          getCampaignTrafficSource(
+            campaignData.id
+          );
+
+        /*
+         * Keep the existing direct campaign update.
+         * Other pages can continue using campaigns.views.
+         */
+        const nextViews =
+          (campaignData.views || 0) + 1;
+
+        const { error: viewsError } =
+          await supabase
+            .from("campaigns")
+            .update({
+              views: nextViews,
+            })
+            .eq("id", campaignData.id);
+
+        if (viewsError) {
+          console.warn(
+            "Campaign views update failed:",
+            viewsError
+          );
+        } else {
+          setCampaign((current) =>
+            current
+              ? {
+                  ...current,
+                  views: nextViews,
+                }
+              : current
+          );
+        }
+
+        /*
+         * Detailed visitor analytics.
+         */
+        if (!viewTrackedRef.current) {
+          viewTrackedRef.current = true;
+
+          await trackCampaignEvent(
+            campaignData.id,
+            "view",
+            undefined,
+            {
+              page: "public_campaign",
+              slug: campaignData.slug,
+            }
+          );
         }
       } catch (err: any) {
-        console.error("Campaign loading error:", err);
-        setError(err?.message || "Unable to load this campaign.");
+        console.error(
+          "Campaign loading error:",
+          err
+        );
+
+        setError(
+          err?.message ||
+            "Unable to load this campaign."
+        );
       } finally {
         setLoading(false);
       }
@@ -265,19 +571,36 @@ export default function PublicCampaignPage() {
     if (slug) {
       loadCampaign();
     }
-  }, [slug]);
+  }, [
+    slug,
+    supabase,
+    trackCampaignEvent,
+  ]);
 
-  function handlePhotoUpload(event: ChangeEvent<HTMLInputElement>) {
+  /*
+   * =======================================================
+   * PHOTO UPLOAD
+   * =======================================================
+   */
+
+  function handlePhotoUpload(
+    event: ChangeEvent<HTMLInputElement>
+  ) {
     const file = event.target.files?.[0];
+
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
-      setError("Please upload an image file.");
+      setError(
+        "Please upload an image file."
+      );
       return;
     }
 
     if (file.size > 10 * 1024 * 1024) {
-      setError("Please choose an image smaller than 10 MB.");
+      setError(
+        "Please choose an image smaller than 10 MB."
+      );
       return;
     }
 
@@ -286,102 +609,230 @@ export default function PublicCampaignPage() {
     const reader = new FileReader();
 
     reader.onload = () => {
-      const dataUrl = reader.result as string;
+      const dataUrl =
+        reader.result as string;
 
       const probe = new Image();
+
       probe.onload = () => {
-        setPhotoSize({ width: probe.naturalWidth, height: probe.naturalHeight });
-        setAdjustment(DEFAULT_ADJUSTMENT);
+        setPhotoSize({
+          width: probe.naturalWidth,
+          height: probe.naturalHeight,
+        });
+
+        setAdjustment(
+          DEFAULT_ADJUSTMENT
+        );
+
         setPhoto(dataUrl);
+
         setGeneratedImage(null);
+
         setDownloaded(false);
       };
+
       probe.onerror = () => {
-        setError("Could not read your photo.");
+        setError(
+          "Could not read your photo."
+        );
       };
+
       probe.src = dataUrl;
     };
 
     reader.onerror = () => {
-      setError("Could not read your photo.");
+      setError(
+        "Could not read your photo."
+      );
     };
 
     reader.readAsDataURL(file);
+
     event.target.value = "";
   }
 
-  const canvasConfig = template?.canvas_config;
+  /*
+   * =======================================================
+   * CANVAS CONFIG
+   * =======================================================
+   */
 
-  const canvasWidth = canvasConfig?.canvas?.width || template?.width || 1080;
-  const canvasHeight = canvasConfig?.canvas?.height || template?.height || 1080;
+  const canvasConfig =
+    template?.canvas_config;
 
-  const photoPosition = useMemo<PhotoPosition>(() => {
-    const photoConfig = canvasConfig?.photo;
+  const canvasWidth =
+    canvasConfig?.canvas?.width ||
+    template?.width ||
+    1080;
 
-    if (!photoConfig) {
-      return { left: 25, top: 25, width: 50, height: 50, angle: 0, shape: "rectangle" };
-    }
+  const canvasHeight =
+    canvasConfig?.canvas?.height ||
+    template?.height ||
+    1080;
 
-    return {
-      left: (photoConfig.x / canvasWidth) * 100,
-      top: (photoConfig.y / canvasHeight) * 100,
-      width: (photoConfig.width / canvasWidth) * 100,
-      height: (photoConfig.height / canvasHeight) * 100,
-      angle: photoConfig.angle || 0,
-      shape: photoConfig.shape || "rectangle",
-    };
-  }, [canvasConfig, canvasWidth, canvasHeight]);
+  const photoPosition =
+    useMemo<PhotoPosition>(() => {
+      const photoConfig =
+        canvasConfig?.photo;
 
-  const namePosition = useMemo<NamePosition>(() => {
-    const nameConfig = canvasConfig?.name;
+      if (!photoConfig) {
+        return {
+          left: 25,
+          top: 25,
+          width: 50,
+          height: 50,
+          angle: 0,
+          shape: "rectangle",
+        };
+      }
 
-    if (!nameConfig) {
       return {
-        left: 10,
-        top: 85,
-        width: 80,
-        fontSize: 42,
-        fontFamily: "Arial",
-        fontWeight: 600,
-        textAlign: "center",
-        color: "#111111",
-        angle: 0,
+        left:
+          (photoConfig.x /
+            canvasWidth) *
+          100,
+
+        top:
+          (photoConfig.y /
+            canvasHeight) *
+          100,
+
+        width:
+          (photoConfig.width /
+            canvasWidth) *
+          100,
+
+        height:
+          (photoConfig.height /
+            canvasHeight) *
+          100,
+
+        angle:
+          photoConfig.angle || 0,
+
+        shape:
+          photoConfig.shape ||
+          "rectangle",
       };
-    }
+    }, [
+      canvasConfig,
+      canvasWidth,
+      canvasHeight,
+    ]);
 
-    return {
-      left: (nameConfig.x / canvasWidth) * 100,
-      top: (nameConfig.y / canvasHeight) * 100,
-      width: (nameConfig.width / canvasWidth) * 100,
-      fontSize: nameConfig.fontSize || 42,
-      fontFamily: nameConfig.fontFamily || "Arial",
-      fontWeight: nameConfig.fontWeight || 600,
-      textAlign: nameConfig.textAlign || "center",
-      color: nameConfig.color || "#111111",
-      angle: nameConfig.angle || 0,
-    };
-  }, [canvasConfig, canvasWidth, canvasHeight]);
+  const namePosition =
+    useMemo<NamePosition>(() => {
+      const nameConfig =
+        canvasConfig?.name;
 
-  const nameHeightPct = ((namePosition.fontSize * 1.5) / canvasHeight) * 100;
+      if (!nameConfig) {
+        return {
+          left: 10,
+          top: 85,
+          width: 80,
+          fontSize: 42,
+          fontFamily: "Arial",
+          fontWeight: 600,
+          textAlign: "center",
+          color: "#111111",
+          angle: 0,
+        };
+      }
 
-  const clampedAdjustment = useMemo(() => {
-    if (!photoSize) return adjustment;
+      return {
+        left:
+          (nameConfig.x /
+            canvasWidth) *
+          100,
 
-    return clampAdjustment(
+        top:
+          (nameConfig.y /
+            canvasHeight) *
+          100,
+
+        width:
+          (nameConfig.width /
+            canvasWidth) *
+          100,
+
+        fontSize:
+          nameConfig.fontSize || 42,
+
+        fontFamily:
+          nameConfig.fontFamily ||
+          "Arial",
+
+        fontWeight:
+          nameConfig.fontWeight ||
+          600,
+
+        textAlign:
+          nameConfig.textAlign ||
+          "center",
+
+        color:
+          nameConfig.color ||
+          "#111111",
+
+        angle:
+          nameConfig.angle || 0,
+      };
+    }, [
+      canvasConfig,
+      canvasWidth,
+      canvasHeight,
+    ]);
+
+  const nameHeightPct =
+    ((namePosition.fontSize * 1.5) /
+      canvasHeight) *
+    100;
+
+  const clampedAdjustment =
+    useMemo(() => {
+      if (!photoSize) {
+        return adjustment;
+      }
+
+      return clampAdjustment(
+        adjustment,
+        photoPosition.width,
+        photoPosition.height,
+        photoSize.width,
+        photoSize.height
+      );
+    }, [
       adjustment,
       photoPosition.width,
       photoPosition.height,
-      photoSize.width,
-      photoSize.height
-    );
-  }, [adjustment, photoPosition.width, photoPosition.height, photoSize]);
+      photoSize,
+    ]);
+
+  /*
+   * =======================================================
+   * PHOTO CONTROLS
+   * =======================================================
+   */
 
   function updateZoom(nextZoom: number) {
     setAdjustment((current) => {
-      const zoom = Math.min(3, Math.max(1, nextZoom));
-      if (!photoSize) return { ...current, zoom };
+      const zoom = Math.min(
+        3,
+        Math.max(1, nextZoom)
+      );
+
+      if (!photoSize) {
+        return {
+          ...current,
+          zoom,
+        };
+      }
+
       return clampAdjustment(
-        { ...current, zoom },
+        {
+          ...current,
+          zoom,
+        },
         photoPosition.width,
         photoPosition.height,
         photoSize.width,
@@ -391,37 +842,76 @@ export default function PublicCampaignPage() {
   }
 
   function resetAdjustment() {
-    setAdjustment(DEFAULT_ADJUSTMENT);
+    setAdjustment(
+      DEFAULT_ADJUSTMENT
+    );
   }
 
-  function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+  function handlePointerDown(
+    event: ReactPointerEvent<HTMLDivElement>
+  ) {
     if (!photo) return;
-    (event.target as HTMLElement).setPointerCapture(event.pointerId);
+
+    (
+      event.target as HTMLElement
+    ).setPointerCapture(
+      event.pointerId
+    );
+
     dragState.current = {
       startX: event.clientX,
       startY: event.clientY,
-      startOffset: clampedAdjustment,
+      startOffset:
+        clampedAdjustment,
     };
   }
 
-  function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!dragState.current || !frameRef.current || !photoSize) return;
+  function handlePointerMove(
+    event: ReactPointerEvent<HTMLDivElement>
+  ) {
+    if (
+      !dragState.current ||
+      !frameRef.current ||
+      !photoSize
+    ) {
+      return;
+    }
 
-    const rect = frameRef.current.getBoundingClientRect();
-    const dxPct = (event.clientX - dragState.current.startX) / rect.width;
-    const dyPct = (event.clientY - dragState.current.startY) / rect.height;
+    const rect =
+      frameRef.current.getBoundingClientRect();
 
-    const next = clampAdjustment(
-      {
-        zoom: dragState.current.startOffset.zoom,
-        offsetX: dragState.current.startOffset.offsetX + dxPct,
-        offsetY: dragState.current.startOffset.offsetY + dyPct,
-      },
-      photoPosition.width,
-      photoPosition.height,
-      photoSize.width,
-      photoSize.height
-    );
+    const dxPct =
+      (event.clientX -
+        dragState.current.startX) /
+      rect.width;
+
+    const dyPct =
+      (event.clientY -
+        dragState.current.startY) /
+      rect.height;
+
+    const next =
+      clampAdjustment(
+        {
+          zoom:
+            dragState.current
+              .startOffset.zoom,
+
+          offsetX:
+            dragState.current
+              .startOffset
+              .offsetX + dxPct,
+
+          offsetY:
+            dragState.current
+              .startOffset
+              .offsetY + dyPct,
+        },
+        photoPosition.width,
+        photoPosition.height,
+        photoSize.width,
+        photoSize.height
+      );
 
     setAdjustment(next);
   }
@@ -430,14 +920,31 @@ export default function PublicCampaignPage() {
     dragState.current = null;
   }
 
+  /*
+   * =======================================================
+   * PREVIEW
+   * =======================================================
+   */
+
   function Preview() {
     if (!template) return null;
 
-    let photoDrawPct: { width: number; height: number; left: number; top: number } | null = null;
+    let photoDrawPct: {
+      width: number;
+      height: number;
+      left: number;
+      top: number;
+    } | null = null;
 
     if (photo && photoSize) {
-      const frameAspect = photoPosition.width / photoPosition.height;
-      const { width: drawW, height: drawH } = coverSize(
+      const frameAspect =
+        photoPosition.width /
+        photoPosition.height;
+
+      const {
+        width: drawW,
+        height: drawH,
+      } = coverSize(
         frameAspect,
         1,
         photoSize.width,
@@ -445,11 +952,22 @@ export default function PublicCampaignPage() {
         clampedAdjustment.zoom
       );
 
-      const widthPct = (drawW / frameAspect) * 100;
-      const heightPct = drawH * 100;
+      const widthPct =
+        (drawW / frameAspect) *
+        100;
 
-      const leftPct = (100 - widthPct) / 2 + clampedAdjustment.offsetX * 100;
-      const topPct = (100 - heightPct) / 2 + clampedAdjustment.offsetY * 100;
+      const heightPct =
+        drawH * 100;
+
+      const leftPct =
+        (100 - widthPct) / 2 +
+        clampedAdjustment.offsetX *
+          100;
+
+      const topPct =
+        (100 - heightPct) / 2 +
+        clampedAdjustment.offsetY *
+          100;
 
       photoDrawPct = {
         width: widthPct,
@@ -459,15 +977,29 @@ export default function PublicCampaignPage() {
       };
     }
 
-    const nameBoxPixelWidth = (namePosition.width / 100) * canvasWidth;
-    const nameBoxPixelHeight = (nameHeightPct / 100) * canvasHeight;
+    const nameBoxPixelWidth =
+      (namePosition.width / 100) *
+      canvasWidth;
+
+    const nameBoxPixelHeight =
+      (nameHeightPct / 100) *
+      canvasHeight;
 
     let textAnchor = "middle";
-    let textX = nameBoxPixelWidth / 2;
-    if (namePosition.textAlign === "left") {
+
+    let textX =
+      nameBoxPixelWidth / 2;
+
+    if (
+      namePosition.textAlign ===
+      "left"
+    ) {
       textAnchor = "start";
       textX = 0;
-    } else if (namePosition.textAlign === "right") {
+    } else if (
+      namePosition.textAlign ===
+      "right"
+    ) {
       textAnchor = "end";
       textX = nameBoxPixelWidth;
     }
@@ -476,7 +1008,9 @@ export default function PublicCampaignPage() {
       <div className="flex w-full justify-center">
         <div
           className="relative w-full max-w-[520px] overflow-hidden rounded-2xl bg-neutral-100 shadow-xl"
-          style={{ aspectRatio: `${canvasWidth}/${canvasHeight}` }}
+          style={{
+            aspectRatio: `${canvasWidth}/${canvasHeight}`,
+          }}
         >
           {/* DESIGN */}
           <img
@@ -490,18 +1024,33 @@ export default function PublicCampaignPage() {
           {photo && (
             <div
               ref={frameRef}
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-              onPointerCancel={handlePointerUp}
+              onPointerDown={
+                handlePointerDown
+              }
+              onPointerMove={
+                handlePointerMove
+              }
+              onPointerUp={
+                handlePointerUp
+              }
+              onPointerCancel={
+                handlePointerUp
+              }
               className="absolute cursor-grab touch-none overflow-hidden active:cursor-grabbing"
               style={{
                 left: `${photoPosition.left}%`,
                 top: `${photoPosition.top}%`,
                 width: `${photoPosition.width}%`,
                 height: `${photoPosition.height}%`,
-                borderRadius: photoPosition.shape === "circle" ? "9999px" : undefined,
-                transform: photoPosition.angle ? `rotate(${photoPosition.angle}deg)` : undefined,
+                borderRadius:
+                  photoPosition.shape ===
+                  "circle"
+                    ? "9999px"
+                    : undefined,
+                transform:
+                  photoPosition.angle
+                    ? `rotate(${photoPosition.angle}deg)`
+                    : undefined,
               }}
             >
               {photoDrawPct && (
@@ -530,7 +1079,10 @@ export default function PublicCampaignPage() {
                 top: `${namePosition.top}%`,
                 width: `${namePosition.width}%`,
                 height: `${nameHeightPct}%`,
-                transform: namePosition.angle ? `rotate(${namePosition.angle}deg)` : undefined,
+                transform:
+                  namePosition.angle
+                    ? `rotate(${namePosition.angle}deg)`
+                    : undefined,
               }}
             >
               <svg
@@ -539,16 +1091,29 @@ export default function PublicCampaignPage() {
               >
                 <text
                   x={textX}
-                  y={nameBoxPixelHeight / 2}
-                  textAnchor={textAnchor as "start" | "middle" | "end" | "inherit"}
+                  y={
+                    nameBoxPixelHeight /
+                    2
+                  }
+                  textAnchor={
+                    textAnchor as
+                      | "start"
+                      | "middle"
+                      | "end"
+                      | "inherit"
+                  }
                   dominantBaseline="central"
-                  textLength={nameBoxPixelWidth}
+                  textLength={
+                    nameBoxPixelWidth
+                  }
                   lengthAdjust="spacingAndGlyphs"
                   style={{
                     fontFamily: `${namePosition.fontFamily}, Arial, sans-serif`,
-                    fontWeight: namePosition.fontWeight,
+                    fontWeight:
+                      namePosition.fontWeight,
                     fontSize: `${namePosition.fontSize}px`,
-                    fill: namePosition.color,
+                    fill:
+                      namePosition.color,
                   }}
                 >
                   {name}
@@ -561,16 +1126,28 @@ export default function PublicCampaignPage() {
     );
   }
 
+  /*
+   * =======================================================
+   * GENERATE DP
+   * =======================================================
+   */
+
   async function generateDP() {
-    if (!campaign || !template) return;
+    if (!campaign || !template) {
+      return;
+    }
 
     if (!photo || !photoSize) {
-      setError("Please upload your photo first.");
+      setError(
+        "Please upload your photo first."
+      );
       return;
     }
 
     if (!name.trim()) {
-      setError("Please enter your name.");
+      setError(
+        "Please enter your name."
+      );
       return;
     }
 
@@ -580,30 +1157,78 @@ export default function PublicCampaignPage() {
     setDownloaded(false);
 
     try {
-      const canvas = document.createElement("canvas");
+      const canvas =
+        document.createElement(
+          "canvas"
+        );
+
       canvas.width = canvasWidth;
       canvas.height = canvasHeight;
 
-      const ctx = canvas.getContext("2d", { alpha: true });
+      const ctx =
+        canvas.getContext("2d", {
+          alpha: true,
+        });
+
       if (!ctx) {
-        throw new Error("Your browser could not prepare the image.");
+        throw new Error(
+          "Your browser could not prepare the image."
+        );
       }
 
-      ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+      ctx.clearRect(
+        0,
+        0,
+        canvasWidth,
+        canvasHeight
+      );
+
       ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-      const design = await loadImage(template.asset_url);
-      drawContain(ctx, design, 0, 0, canvasWidth, canvasHeight);
+      ctx.fillRect(
+        0,
+        0,
+        canvasWidth,
+        canvasHeight
+      );
 
-      const attendeePhoto = await loadImage(photo);
+      const design =
+        await loadImage(
+          template.asset_url
+        );
 
-      const px = (photoPosition.left / 100) * canvasWidth;
-      const py = (photoPosition.top / 100) * canvasHeight;
-      const pw = (photoPosition.width / 100) * canvasWidth;
-      const ph = (photoPosition.height / 100) * canvasHeight;
+      drawContain(
+        ctx,
+        design,
+        0,
+        0,
+        canvasWidth,
+        canvasHeight
+      );
 
-      const { width: drawW, height: drawH } = coverSize(
+      const attendeePhoto =
+        await loadImage(photo);
+
+      const px =
+        (photoPosition.left / 100) *
+        canvasWidth;
+
+      const py =
+        (photoPosition.top / 100) *
+        canvasHeight;
+
+      const pw =
+        (photoPosition.width / 100) *
+        canvasWidth;
+
+      const ph =
+        (photoPosition.height / 100) *
+        canvasHeight;
+
+      const {
+        width: drawW,
+        height: drawH,
+      } = coverSize(
         pw,
         ph,
         attendeePhoto.width,
@@ -611,150 +1236,395 @@ export default function PublicCampaignPage() {
         clampedAdjustment.zoom
       );
 
-      const drawX = px + (pw - drawW) / 2 + clampedAdjustment.offsetX * pw;
-      const drawY = py + (ph - drawH) / 2 + clampedAdjustment.offsetY * ph;
+      const drawX =
+        px +
+        (pw - drawW) / 2 +
+        clampedAdjustment.offsetX *
+          pw;
+
+      const drawY =
+        py +
+        (ph - drawH) / 2 +
+        clampedAdjustment.offsetY *
+          ph;
 
       ctx.save();
 
       if (photoPosition.angle) {
-        const centerX = px + pw / 2;
-        const centerY = py + ph / 2;
-        ctx.translate(centerX, centerY);
-        ctx.rotate((photoPosition.angle * Math.PI) / 180);
-        ctx.translate(-centerX, -centerY);
+        const centerX =
+          px + pw / 2;
+
+        const centerY =
+          py + ph / 2;
+
+        ctx.translate(
+          centerX,
+          centerY
+        );
+
+        ctx.rotate(
+          (photoPosition.angle *
+            Math.PI) /
+            180
+        );
+
+        ctx.translate(
+          -centerX,
+          -centerY
+        );
       }
 
       ctx.beginPath();
-      if (photoPosition.shape === "circle") {
-        ctx.ellipse(px + pw / 2, py + ph / 2, pw / 2, ph / 2, 0, 0, Math.PI * 2);
+
+      if (
+        photoPosition.shape ===
+        "circle"
+      ) {
+        ctx.ellipse(
+          px + pw / 2,
+          py + ph / 2,
+          pw / 2,
+          ph / 2,
+          0,
+          0,
+          Math.PI * 2
+        );
       } else {
-        ctx.rect(px, py, pw, ph);
+        ctx.rect(
+          px,
+          py,
+          pw,
+          ph
+        );
       }
+
       ctx.clip();
 
-      ctx.drawImage(attendeePhoto, drawX, drawY, drawW, drawH);
+      ctx.drawImage(
+        attendeePhoto,
+        drawX,
+        drawY,
+        drawW,
+        drawH
+      );
 
       ctx.restore();
 
-      const nx = (namePosition.left / 100) * canvasWidth;
-      const ny = (namePosition.top / 100) * canvasHeight;
-      const nw = (namePosition.width / 100) * canvasWidth;
-      const nh = (nameHeightPct / 100) * canvasHeight;
+      const nx =
+        (namePosition.left / 100) *
+        canvasWidth;
+
+      const ny =
+        (namePosition.top / 100) *
+        canvasHeight;
+
+      const nw =
+        (namePosition.width / 100) *
+        canvasWidth;
+
+      const nh =
+        (nameHeightPct / 100) *
+        canvasHeight;
 
       ctx.save();
 
       if (namePosition.angle) {
-        const centerX = nx + nw / 2;
-        const centerY = ny + nh / 2;
-        ctx.translate(centerX, centerY);
-        ctx.rotate((namePosition.angle * Math.PI) / 180);
-        ctx.translate(-centerX, -centerY);
+        const centerX =
+          nx + nw / 2;
+
+        const centerY =
+          ny + nh / 2;
+
+        ctx.translate(
+          centerX,
+          centerY
+        );
+
+        ctx.rotate(
+          (namePosition.angle *
+            Math.PI) /
+            180
+        );
+
+        ctx.translate(
+          -centerX,
+          -centerY
+        );
       }
 
       const textAlign =
-        namePosition.textAlign === "left"
+        namePosition.textAlign ===
+        "left"
           ? "left"
-          : namePosition.textAlign === "right"
+          : namePosition.textAlign ===
+              "right"
             ? "right"
             : "center";
 
       ctx.textAlign = textAlign;
       ctx.textBaseline = "middle";
-      ctx.fillStyle = namePosition.color;
+      ctx.fillStyle =
+        namePosition.color;
 
-      let currentFontSize = Math.max(10, namePosition.fontSize);
+      let currentFontSize =
+        Math.max(
+          10,
+          namePosition.fontSize
+        );
+
       ctx.font = `${namePosition.fontWeight} ${currentFontSize}px ${namePosition.fontFamily}, Arial, sans-serif`;
 
-      const textToDraw = name.trim();
-      let textWidth = ctx.measureText(textToDraw).width;
+      const textToDraw =
+        name.trim();
 
-      while (textWidth > nw && currentFontSize > 10) {
+      let textWidth =
+        ctx.measureText(
+          textToDraw
+        ).width;
+
+      while (
+        textWidth > nw &&
+        currentFontSize > 10
+      ) {
         currentFontSize -= 1;
+
         ctx.font = `${namePosition.fontWeight} ${currentFontSize}px ${namePosition.fontFamily}, Arial, sans-serif`;
-        textWidth = ctx.measureText(textToDraw).width;
+
+        textWidth =
+          ctx.measureText(
+            textToDraw
+          ).width;
       }
 
-      let textX = nx + nw / 2;
-      if (textAlign === "left") textX = nx;
-      if (textAlign === "right") textX = nx + nw;
+      let textX =
+        nx + nw / 2;
 
-      const textY = ny + nh / 2;
+      if (textAlign === "left") {
+        textX = nx;
+      }
 
-      ctx.fillText(textToDraw, textX, textY);
+      if (textAlign === "right") {
+        textX = nx + nw;
+      }
+
+      const textY =
+        ny + nh / 2;
+
+      ctx.fillText(
+        textToDraw,
+        textX,
+        textY
+      );
 
       ctx.restore();
 
       let result: string;
+
       try {
-        result = canvas.toDataURL("image/png", 1);
+        result =
+          canvas.toDataURL(
+            "image/png",
+            1
+          );
       } catch (exportError) {
-        console.error("Canvas export failed:", exportError);
+        console.error(
+          "Canvas export failed:",
+          exportError
+        );
+
         throw new Error(
           "The campaign design could not be exported. Please refresh the page and try again."
         );
       }
 
+      /*
+       * Show the generated image first.
+       */
       setGeneratedImage(result);
 
-      const { error: generationError } = await supabase.rpc(
-        "increment_campaign_generation",
-        {
-          campaign_uuid: campaign.id,
-        }
+      /*
+       * ===================================================
+       * KEEP EXISTING DIRECT CAMPAIGN UPDATES
+       * ===================================================
+       *
+       * Other Attend pages already consume these values.
+       */
+
+      const nextGenerations =
+        (campaign.generations || 0) +
+        1;
+
+      const nextParticipants =
+        Math.max(
+          campaign.participants || 0,
+          1
+        );
+
+      const {
+        error: analyticsError,
+      } = await supabase
+        .from("campaigns")
+        .update({
+          generations:
+            nextGenerations,
+          participants:
+            nextParticipants,
+        })
+        .eq(
+          "id",
+          campaign.id
+        );
+
+      if (analyticsError) {
+        console.warn(
+          "Campaign generation update failed:",
+          analyticsError
+        );
+      }
+
+      setCampaign((current) =>
+        current
+          ? {
+              ...current,
+              generations:
+                nextGenerations,
+              participants:
+                nextParticipants,
+            }
+          : current
       );
 
-      if (generationError) {
-        console.warn("Generation tracking failed:", generationError);
-      } else {
-        setCampaign({
-          ...campaign,
-          generations: (campaign.generations || 0) + 1,
-          participants: (campaign.participants || 0) + 1,
-        });
-      }
+      /*
+       * ===================================================
+       * DETAILED VISITOR ANALYTICS
+       * ===================================================
+       */
+
+      await trackCampaignEvent(
+        campaign.id,
+        "generation",
+        undefined,
+        {
+          page: "public_campaign",
+          slug: campaign.slug,
+          has_photo: true,
+          has_name: true,
+        }
+      );
     } catch (err: any) {
-      console.error("DP generation failed:", err);
+      console.error(
+        "DP generation failed:",
+        err
+      );
+
       setGeneratedImage(null);
-      setError(err?.message || "Could not generate your DP.");
+
+      setError(
+        err?.message ||
+          "Could not generate your DP."
+      );
     } finally {
       setGenerating(false);
     }
   }
 
+  /*
+   * =======================================================
+   * DOWNLOAD DP
+   * =======================================================
+   */
+
   async function downloadDP() {
     if (!generatedImage) return;
 
     try {
-      const link = document.createElement("a");
+      const link =
+        document.createElement(
+          "a"
+        );
+
       link.href = generatedImage;
+
       link.download = `${slug}-attend-dp.png`;
+
       document.body.appendChild(link);
+
       link.click();
+
       link.remove();
+
       setDownloaded(true);
 
       if (campaign) {
-        const { error: downloadError } = await supabase.rpc(
-          "increment_campaign_download",
-          {
-            campaign_uuid: campaign.id,
-          }
-        );
+        /*
+         * Keep existing direct campaign update.
+         */
+
+        const nextDownloads =
+          (campaign.downloads || 0) +
+          1;
+
+        const {
+          error: downloadError,
+        } = await supabase
+          .from("campaigns")
+          .update({
+            downloads:
+              nextDownloads,
+          })
+          .eq(
+            "id",
+            campaign.id
+          );
 
         if (downloadError) {
-          console.warn("Download analytics failed:", downloadError);
-        } else {
-          setCampaign({
-            ...campaign,
-            downloads: (campaign.downloads || 0) + 1,
-          });
+          console.warn(
+            "Download analytics failed:",
+            downloadError
+          );
         }
+
+        setCampaign((current) =>
+          current
+            ? {
+                ...current,
+                downloads:
+                  nextDownloads,
+              }
+            : current
+        );
+
+        /*
+         * Detailed visitor analytics.
+         */
+
+        await trackCampaignEvent(
+          campaign.id,
+          "download",
+          undefined,
+          {
+            page: "public_campaign",
+            slug: campaign.slug,
+          }
+        );
       }
     } catch (err) {
-      console.error("Download failed:", err);
-      setError("Could not download the image. Please try again.");
+      console.error(
+        "Download failed:",
+        err
+      );
+
+      setError(
+        "Could not download the image. Please try again."
+      );
     }
   }
+
+  /*
+   * =======================================================
+   * LOADING
+   * =======================================================
+   */
 
   if (loading) {
     return (
@@ -763,11 +1633,20 @@ export default function PublicCampaignPage() {
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-50 text-violet-600">
             <Loader2 className="h-5 w-5 animate-spin" />
           </div>
-          <p className="mt-4 text-sm text-neutral-500">Loading campaign...</p>
+
+          <p className="mt-4 text-sm text-neutral-500">
+            Loading campaign...
+          </p>
         </div>
       </main>
     );
   }
+
+  /*
+   * =======================================================
+   * CAMPAIGN ERROR
+   * =======================================================
+   */
 
   if (error && !campaign) {
     return (
@@ -776,14 +1655,28 @@ export default function PublicCampaignPage() {
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-50 text-violet-600">
             <Sparkles className="h-6 w-6" />
           </div>
-          <h1 className="mt-5 text-xl font-bold">Campaign unavailable</h1>
-          <p className="mt-2 text-sm leading-6 text-neutral-500">{error}</p>
+
+          <h1 className="mt-5 text-xl font-bold">
+            Campaign unavailable
+          </h1>
+
+          <p className="mt-2 text-sm leading-6 text-neutral-500">
+            {error}
+          </p>
         </div>
       </main>
     );
   }
 
-  if (!campaign || !template) return null;
+  if (!campaign || !template) {
+    return null;
+  }
+
+  /*
+   * =======================================================
+   * PAGE UI
+   * =======================================================
+   */
 
   return (
     <main className="min-h-screen bg-white">
@@ -793,9 +1686,15 @@ export default function PublicCampaignPage() {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600 text-white">
               <Sparkles className="h-4 w-4" />
             </div>
-            <span className="text-lg font-bold tracking-tight">Attend</span>
+
+            <span className="text-lg font-bold tracking-tight">
+              Attend
+            </span>
           </div>
-          <span className="text-xs font-medium text-neutral-400">Event DP</span>
+
+          <span className="text-xs font-medium text-neutral-400">
+            Event DP
+          </span>
         </div>
       </header>
 
@@ -805,9 +1704,11 @@ export default function PublicCampaignPage() {
             <Sparkles className="h-3.5 w-3.5" />
             {campaign.title}
           </div>
+
           <h1 className="mt-5 text-3xl font-bold tracking-tight text-neutral-950 sm:text-4xl">
             Create your event DP
           </h1>
+
           <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-neutral-500 sm:text-base">
             Upload your photo and enter your name. Attend will place them into the event design
             for you.
@@ -818,9 +1719,13 @@ export default function PublicCampaignPage() {
           {/* PREVIEW */}
           <section className="order-2 lg:order-1">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Preview</h2>
+              <h2 className="text-sm font-semibold">
+                Preview
+              </h2>
+
               <span className="text-xs text-neutral-400">
-                {canvasWidth} × {canvasHeight}px
+                {canvasWidth} ×{" "}
+                {canvasHeight}px
               </span>
             </div>
 
@@ -839,62 +1744,93 @@ export default function PublicCampaignPage() {
             </div>
 
             {/* PHOTO ADJUSTMENT CONTROLS */}
-            {photo && !generatedImage && (
-              <div className="mt-3 flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 shadow-sm">
-                <Move className="h-4 w-4 shrink-0 text-neutral-400" />
-                <p className="flex-1 text-xs text-neutral-500">
-                  Drag your photo to reposition it, or zoom to adjust the crop.
-                </p>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => updateZoom(clampedAdjustment.zoom - 0.1)}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition hover:bg-neutral-200"
-                    title="Zoom out"
-                  >
-                    <ZoomOut className="h-3.5 w-3.5" />
-                  </button>
-                  <input
-                    type="range"
-                    min={1}
-                    max={3}
-                    step={0.05}
-                    value={clampedAdjustment.zoom}
-                    onChange={(e) => updateZoom(Number(e.target.value))}
-                    className="w-24 accent-violet-600"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => updateZoom(clampedAdjustment.zoom + 0.1)}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition hover:bg-neutral-200"
-                    title="Zoom in"
-                  >
-                    <ZoomIn className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={resetAdjustment}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition hover:bg-neutral-200"
-                    title="Reset position"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                  </button>
+            {photo &&
+              !generatedImage && (
+                <div className="mt-3 flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 shadow-sm">
+                  <Move className="h-4 w-4 shrink-0 text-neutral-400" />
+
+                  <p className="flex-1 text-xs text-neutral-500">
+                    Drag your photo to reposition it, or zoom to adjust the crop.
+                  </p>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateZoom(
+                          clampedAdjustment.zoom -
+                            0.1
+                        )
+                      }
+                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition hover:bg-neutral-200"
+                      title="Zoom out"
+                    >
+                      <ZoomOut className="h-3.5 w-3.5" />
+                    </button>
+
+                    <input
+                      type="range"
+                      min={1}
+                      max={3}
+                      step={0.05}
+                      value={
+                        clampedAdjustment.zoom
+                      }
+                      onChange={(e) =>
+                        updateZoom(
+                          Number(
+                            e.target.value
+                          )
+                        )
+                      }
+                      className="w-24 accent-violet-600"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateZoom(
+                          clampedAdjustment.zoom +
+                            0.1
+                        )
+                      }
+                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition hover:bg-neutral-200"
+                      title="Zoom in"
+                    >
+                      <ZoomIn className="h-3.5 w-3.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={
+                        resetAdjustment
+                      }
+                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition hover:bg-neutral-200"
+                      title="Reset position"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
           </section>
 
           {/* FORM */}
           <section className="order-1 lg:order-2">
             <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm sm:p-6">
-              <h2 className="text-base font-semibold">Personalize your DP</h2>
+              <h2 className="text-base font-semibold">
+                Personalize your DP
+              </h2>
+
               <p className="mt-1 text-xs leading-5 text-neutral-500">
                 Your photo and name will be placed into the campaign design.
               </p>
 
               {/* PHOTO */}
               <div className="mt-6">
-                <label className="text-xs font-semibold text-neutral-700">Your photo</label>
+                <label className="text-xs font-semibold text-neutral-700">
+                  Your photo
+                </label>
 
                 <label
                   htmlFor="attendee-photo"
@@ -902,16 +1838,29 @@ export default function PublicCampaignPage() {
                 >
                   {photo ? (
                     <>
-                      <img src={photo} alt="" className="h-24 w-24 rounded-xl object-cover shadow-sm" />
-                      <p className="mt-3 text-xs font-semibold text-violet-600">Change photo</p>
+                      <img
+                        src={photo}
+                        alt=""
+                        className="h-24 w-24 rounded-xl object-cover shadow-sm"
+                      />
+
+                      <p className="mt-3 text-xs font-semibold text-violet-600">
+                        Change photo
+                      </p>
                     </>
                   ) : (
                     <>
                       <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-violet-600 shadow-sm">
                         <ImagePlus className="h-5 w-5" />
                       </div>
-                      <p className="mt-3 text-sm font-semibold text-neutral-700">Upload your photo</p>
-                      <p className="mt-1 text-xs text-neutral-400">PNG or JPG · Max 10 MB</p>
+
+                      <p className="mt-3 text-sm font-semibold text-neutral-700">
+                        Upload your photo
+                      </p>
+
+                      <p className="mt-1 text-xs text-neutral-400">
+                        PNG or JPG · Max 10 MB
+                      </p>
                     </>
                   )}
 
@@ -920,27 +1869,40 @@ export default function PublicCampaignPage() {
                     type="file"
                     accept="image/png,image/jpeg,image/webp"
                     className="hidden"
-                    onChange={handlePhotoUpload}
+                    onChange={
+                      handlePhotoUpload
+                    }
                   />
                 </label>
               </div>
 
               {/* NAME */}
               <div className="mt-5">
-                <label htmlFor="attendee-name" className="text-xs font-semibold text-neutral-700">
+                <label
+                  htmlFor="attendee-name"
+                  className="text-xs font-semibold text-neutral-700"
+                >
                   Your name
                 </label>
 
                 <div className="relative mt-2">
                   <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+
                   <input
                     id="attendee-name"
                     type="text"
                     value={name}
                     onChange={(event) => {
-                      setName(event.target.value);
-                      setGeneratedImage(null);
+                      setName(
+                        event.target.value
+                      );
+
+                      setGeneratedImage(
+                        null
+                      );
+
                       setDownloaded(false);
+
                       setError("");
                     }}
                     placeholder="Enter your name"
@@ -959,8 +1921,14 @@ export default function PublicCampaignPage() {
               {!generatedImage ? (
                 <button
                   type="button"
-                  onClick={generateDP}
-                  disabled={generating || !photo || !name.trim()}
+                  onClick={
+                    generateDP
+                  }
+                  disabled={
+                    generating ||
+                    !photo ||
+                    !name.trim()
+                  }
                   className="mt-6 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-violet-600 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {generating ? (
@@ -979,7 +1947,9 @@ export default function PublicCampaignPage() {
                 <div className="mt-6 space-y-3">
                   <button
                     type="button"
-                    onClick={downloadDP}
+                    onClick={
+                      downloadDP
+                    }
                     className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-violet-600 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
                   >
                     {downloaded ? (
@@ -997,7 +1967,12 @@ export default function PublicCampaignPage() {
 
                   <button
                     type="button"
-                    onClick={() => setGeneratedImage(null)}
+                    onClick={() => {
+                      setGeneratedImage(
+                        null
+                      );
+                      setDownloaded(false);
+                    }}
                     className="h-11 w-full rounded-xl border border-neutral-200 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50"
                   >
                     Make another

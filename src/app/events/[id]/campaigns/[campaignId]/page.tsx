@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
+  BarChart3,
   Check,
   Copy,
   ExternalLink,
@@ -506,7 +507,22 @@ export default function CampaignDashboard() {
 
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+
+            {/* DETAILED ANALYTICS */}
+
+            <button
+              type="button"
+              onClick={() =>
+                router.push(
+                  `/events/${eventId}/campaigns/${campaignId}/analytics`
+                )
+              }
+              className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-700 shadow-sm transition hover:bg-neutral-50"
+            >
+              <BarChart3 className="h-4 w-4 text-violet-600" />
+              Detailed Analytics
+            </button>
 
             {/* EDIT */}
 
@@ -869,4 +885,3 @@ function ArrowDownIcon() {
     </svg>
   );
 }
-

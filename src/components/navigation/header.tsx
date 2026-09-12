@@ -1,20 +1,22 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Bell } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
 interface NotificationItem {
   id: string;
   title: string;
   message: string;
-  time: string;
+  created_at: string;
   read: boolean;
 }
 
 interface HeaderProps {
   user?: {
+    id?: string;
     name?: string;
     full_name?: string;
     avatarUrl?: string;
@@ -23,27 +25,55 @@ interface HeaderProps {
   } | null;
 }
 
-const INITIAL_NOTIFICATIONS: NotificationItem[] = [
-  {
-    id: "1",
-    title: "Campaign Ready",
-    message: "Your event DP canvas has been loaded and is ready for export.",
-    time: "Just now",
-    read: false,
-  },
-  {
-    id: "2",
-    title: "High Quality Export",
-    message: "You can download high-resolution PNG outputs for your socials.",
-    time: "5m ago",
-    read: false,
-  },
-];
-
 export function Header({ user }: HeaderProps) {
+  const supabase = createClient();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<NotificationItem[]>(INITIAL_NOTIFICATIONS);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Fetch actual notifications and subscribe to real-time updates
+  const fetchNotifications = useCallback(async () => {
+    if (!user?.id) return;
+
+    const { data, error } = await supabase
+      .from("notifications")
+      .select("id, title, message, created_at, read")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    if (!error && data) {
+      setNotifications(data);
+    }
+  }, [supabase, user?.id]);
+
+  useEffect(() => {
+    fetchNotifications();
+
+    if (!user?.id) return;
+
+    // Set up Realtime listener for incoming notifications
+    const channel = supabase
+      .channel(`header-realtime-notifications:${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "notifications",
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const newNotification = payload.new as NotificationItem;
+          setNotifications((prev) => [newNotification, ...prev]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, user?.id, fetchNotifications]);
 
   // Determine avatar URL with fallbacks
   const avatarSrc = user?.avatarUrl || user?.avatar_url || user?.avatar;
@@ -67,14 +97,27 @@ export function Header({ user }: HeaderProps) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const markAllAsRead = () => {
+  const markAllAsRead = async () => {
+    if (!user?.id) return;
+
     setNotifications((prev) => prev.map((item) => ({ ...item, read: true })));
+
+    await supabase
+      .from("notifications")
+      .update({ read: true })
+      .eq("user_id", user.id)
+      .eq("read", false);
   };
 
-  const markAsRead = (id: string) => {
+  const markAsRead = async (id: string) => {
     setNotifications((prev) =>
       prev.map((item) => (item.id === id ? { ...item, read: true } : item))
     );
+
+    await supabase
+      .from("notifications")
+      .update({ read: true })
+      .eq("id", id);
   };
 
   return (
@@ -165,7 +208,10 @@ export function Header({ user }: HeaderProps) {
                             {item.title}
                           </p>
                           <span className="text-[10px] text-neutral-400 shrink-0">
-                            {item.time}
+                            {new Date(item.created_at).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
                           </span>
                         </div>
                         <p className="mt-1 text-xs text-neutral-500 leading-snug">

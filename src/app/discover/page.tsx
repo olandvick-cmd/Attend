@@ -810,7 +810,7 @@ return ( <main className="min-h-screen bg-white">
                   key={
                     campaign.id
                   }
-                  href={`/campaign/${campaign.slug}`}
+                  href={`/campaign/${campaign.slug}?source=discover`}
                   className="group overflow-hidden rounded-2xl border border-neutral-200 bg-white transition hover:-translate-y-1 hover:shadow-xl hover:shadow-neutral-100"
                 >
 
