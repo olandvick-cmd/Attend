@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 import {
   getNotifications,
@@ -9,65 +10,64 @@ import {
   markNotificationRead,
 } from "@/lib/notifications/client";
 
-import type {
-  Notification,
-  NotificationFilter,
-} from "@/lib/notifications/types";
+import type { Notification } from "@/lib/notifications/types";
 
-import { createClient } from "@/lib/supabase/client";
+export function useNotifications(category = "all") {
+  const supabase = useMemo(() => createClient(), []);
 
-const supabase = createClient();
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [loading, setLoading] = useState(true);
 
-export function useNotifications(
-  filter: NotificationFilter = "all"
-) {
-  const [notifications, setNotifications] =
-    useState<Notification[]>([]);
-
-  const [unreadCount, setUnreadCount] =
-    useState(0);
-
-  const [loading, setLoading] =
-    useState(true);
-
-  const [error, setError] =
-    useState<string | null>(null);
-
-  const loadNotifications = useCallback(async () => {
+  /*
+   * =========================================================
+   * REFRESH NOTIFICATIONS
+   * =========================================================
+   */
+  const refresh = useCallback(async () => {
     try {
-      setLoading(true);
-      setError(null);
-
       const [items, count] = await Promise.all([
-        getNotifications(filter),
+        getNotifications(category),
         getUnreadNotificationCount(),
       ]);
 
       setNotifications(items);
       setUnreadCount(count);
-    } catch (err) {
-      console.error(err);
-      setError("Unable to load notifications.");
+    } catch (error) {
+      console.error(
+        "[Attend Notifications] Refresh failed:",
+        error
+      );
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [category]);
 
+  /*
+   * =========================================================
+   * INITIAL LOAD
+   * =========================================================
+   */
   useEffect(() => {
-    loadNotifications();
-  }, [loadNotifications]);
+    refresh();
+  }, [refresh]);
 
+  /*
+   * =========================================================
+   * REALTIME NOTIFICATIONS
+   * =========================================================
+   */
   useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let activeChannel: ReturnType<typeof supabase.channel> | null = null;
 
-    const setupRealtime = async () => {
+    async function setupRealtime() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
 
       if (!user) return;
 
-      channel = supabase
+      const channel = supabase
         .channel(`notifications:${user.id}`)
         .on(
           "postgres_changes",
@@ -78,81 +78,114 @@ export function useNotifications(
             filter: `user_id=eq.${user.id}`,
           },
           () => {
-            loadNotifications();
+            refresh();
           }
         )
-        .subscribe();
-    };
+        .subscribe((status) => {
+          console.log(
+            "[Attend Notifications] Realtime status:",
+            status
+          );
+        });
+
+      activeChannel = channel;
+    }
 
     setupRealtime();
 
     return () => {
-      if (channel) {
-        supabase.removeChannel(channel);
+      if (activeChannel) {
+        supabase.removeChannel(activeChannel);
       }
     };
-  }, [loadNotifications]);
+  }, [supabase, refresh]);
 
+  /*
+   * =========================================================
+   * MARK ONE AS READ
+   * =========================================================
+   */
   const markRead = useCallback(
     async (id: string) => {
-      const notification = notifications.find(
-        (item) => item.id === id
-      );
+      try {
+        const notification = notifications.find(
+          (item) => item.id === id
+        );
 
-      if (!notification || notification.status === "read") {
-        return;
+        if (!notification || notification.status === "read") {
+          return;
+        }
+
+        const success = await markNotificationRead(id);
+
+        if (!success) {
+          return;
+        }
+
+        setNotifications((current) =>
+          current.map((item) =>
+            item.id === id
+              ? {
+                  ...item,
+                  status: "read",
+                  read_at:
+                    item.read_at ??
+                    new Date().toISOString(),
+                }
+              : item
+          )
+        );
+
+        setUnreadCount((current) =>
+          Math.max(0, current - 1)
+        );
+      } catch (error) {
+        console.error(
+          "[Attend Notifications] Mark read failed:",
+          error
+        );
       }
-
-      const success = await markNotificationRead(id);
-
-      if (!success) return;
-
-      setNotifications((current) =>
-        current.map((item) =>
-          item.id === id
-            ? {
-                ...item,
-                status: "read",
-                read_at:
-                  item.read_at ??
-                  new Date().toISOString(),
-              }
-            : item
-        )
-      );
-
-      setUnreadCount((count) =>
-        Math.max(0, count - 1)
-      );
     },
     [notifications]
   );
 
+  /*
+   * =========================================================
+   * MARK ALL AS READ
+   * =========================================================
+   */
   const markAllRead = useCallback(async () => {
-    const count =
+    try {
+      if (unreadCount === 0) {
+        return;
+      }
+
       await markAllNotificationsRead();
 
-    if (count <= 0) return;
+      setNotifications((current) =>
+        current.map((notification) => ({
+          ...notification,
+          status: "read",
+          read_at:
+            notification.read_at ??
+            new Date().toISOString(),
+        }))
+      );
 
-    setNotifications((current) =>
-      current.map((item) => ({
-        ...item,
-        status: "read",
-        read_at:
-          item.read_at ??
-          new Date().toISOString(),
-      }))
-    );
-
-    setUnreadCount(0);
-  }, []);
+      setUnreadCount(0);
+    } catch (error) {
+      console.error(
+        "[Attend Notifications] Mark all read failed:",
+        error
+      );
+    }
+  }, [unreadCount]);
 
   return {
     notifications,
     unreadCount,
     loading,
-    error,
-    refresh: loadNotifications,
+    refresh,
     markRead,
     markAllRead,
   };

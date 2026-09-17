@@ -1,30 +1,61 @@
 "use client";
 
-import Link from "next/link";
+import { useState } from "react";
 import { Bell } from "lucide-react";
 
 import { useNotifications } from "@/hooks/useNotifications";
+import { NotificationDropdown } from "./NotificationDropdown";
 
-export default function NotificationBell() {
-  const { unreadCount } = useNotifications("all");
+export function NotificationBell() {
+  const [open, setOpen] = useState(false);
+
+  const {
+    notifications,
+    unreadCount,
+    loading,
+    markRead,
+    markAllRead,
+  } = useNotifications("all");
 
   return (
-    <Link
-      href="/notifications"
-      aria-label={
-        unreadCount > 0
-          ? `${unreadCount} unread notifications`
-          : "Notifications"
-      }
-      className="relative flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-gray-100"
-    >
-      <Bell className="h-5 w-5" />
+    <div className="relative">
+      {/* =====================================================
+          BELL BUTTON
+      ===================================================== */}
+      <button
+        type="button"
+        aria-label="Notifications"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className="relative flex h-9 w-9 items-center justify-center rounded-full bg-neutral-50 text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20"
+      >
+        <Bell className="h-4 w-4" />
 
-      {unreadCount > 0 && (
-        <span className="absolute right-1 top-1 flex min-w-[18px] h-[18px] items-center justify-center rounded-full bg-purple-600 px-1 text-[10px] font-semibold text-white">
-          {unreadCount > 99 ? "99+" : unreadCount}
-        </span>
+        {/* ===================================================
+            UNREAD INDICATOR
+        =================================================== */}
+        {unreadCount > 0 && (
+          <span className="absolute right-1.5 top-1.5 flex h-2.5 w-2.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-50" />
+
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-violet-600 ring-2 ring-white" />
+          </span>
+        )}
+      </button>
+
+      {/* =====================================================
+          DROPDOWN
+      ===================================================== */}
+      {open && (
+        <NotificationDropdown
+          notifications={notifications}
+          unreadCount={unreadCount}
+          loading={loading}
+          markRead={markRead}
+          markAllRead={markAllRead}
+          onClose={() => setOpen(false)}
+        />
       )}
-    </Link>
+    </div>
   );
 }
