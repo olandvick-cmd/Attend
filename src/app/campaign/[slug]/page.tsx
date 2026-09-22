@@ -505,32 +505,19 @@ export default function PublicCampaignPage() {
             campaignData.id
           );
 
-        const nextViews =
-          (campaignData.views || 0) + 1;
+        if (!viewTrackedRef.current) {
+  viewTrackedRef.current = true;
 
-        const { error: viewsError } =
-          await supabase
-            .from("campaigns")
-            .update({
-              views: nextViews,
-            })
-            .eq("id", campaignData.id);
-
-        if (viewsError) {
-          console.warn(
-            "Campaign views update failed:",
-            viewsError
-          );
-        } else {
-          setCampaign((current) =>
-            current
-              ? {
-                  ...current,
-                  views: nextViews,
-                }
-              : current
-          );
-        }
+  await trackCampaignEvent(
+    campaignData.id,
+    "view",
+    undefined,
+    {
+      page: "public_campaign",
+      slug: campaignData.slug,
+    }
+  );
+}
 
         if (!viewTrackedRef.current) {
           viewTrackedRef.current = true;
@@ -1433,50 +1420,17 @@ export default function PublicCampaignPage() {
 
       setGeneratedImage(result);
 
-      const nextGenerations =
-        (campaign.generations || 0) +
-        1;
-
-      const nextParticipants =
-        Math.max(
-          campaign.participants || 0,
-          1
-        );
-
-      const {
-        error: analyticsError,
-      } = await supabase
-        .from("campaigns")
-        .update({
-          generations:
-            nextGenerations,
-          participants:
-            nextParticipants,
-        })
-        .eq(
-          "id",
-          campaign.id
-        );
-
-      if (analyticsError) {
-        console.warn(
-          "Campaign generation update failed:",
-          analyticsError
-        );
-      }
-
-      setCampaign((current) =>
-        current
-          ? {
-              ...current,
-              generations:
-                nextGenerations,
-              participants:
-                nextParticipants,
-            }
-          : current
-      );
-
+      await trackCampaignEvent(
+  campaign.id,
+  "generate",
+  undefined,
+  {
+    page: "public_campaign",
+    slug: campaign.slug,
+    has_photo: true,
+    has_name: true,
+  }
+);
       await trackCampaignEvent(
         campaign.id,
         "generate",
@@ -1533,39 +1487,15 @@ export default function PublicCampaignPage() {
       setDownloaded(true);
 
       if (campaign) {
-        const nextDownloads =
-          (campaign.downloads || 0) +
-          1;
-
-        const {
-          error: downloadError,
-        } = await supabase
-          .from("campaigns")
-          .update({
-            downloads:
-              nextDownloads,
-          })
-          .eq(
-            "id",
-            campaign.id
-          );
-
-        if (downloadError) {
-          console.warn(
-            "Download analytics failed:",
-            downloadError
-          );
-        }
-
-        setCampaign((current) =>
-          current
-            ? {
-                ...current,
-                downloads:
-                  nextDownloads,
-              }
-            : current
-        );
+        await trackCampaignEvent(
+  campaign.id,
+  "download",
+  undefined,
+  {
+    page: "public_campaign",
+    slug: campaign.slug,
+  }
+);
 
         await trackCampaignEvent(
           campaign.id,
@@ -1632,16 +1562,15 @@ export default function PublicCampaignPage() {
 
       setShared(true);
 
-      const nextShares = (campaign.shares || 0) + 1;
-
-      await supabase
-        .from("campaigns")
-        .update({ shares: nextShares })
-        .eq("id", campaign.id);
-
-      setCampaign((current) =>
-        current ? { ...current, shares: nextShares } : current
-      );
+      await trackCampaignEvent(
+  campaign.id,
+  "share",
+  "native_share",
+  {
+    page: "public_campaign",
+    slug: campaign.slug,
+  }
+);
 
       await trackCampaignEvent(campaign.id, "share", "native_share", {
         slug: campaign.slug,

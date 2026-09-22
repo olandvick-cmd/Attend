@@ -19,11 +19,9 @@ export function useNotifications(category = "all") {
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  /*
-   * =========================================================
-   * REFRESH NOTIFICATIONS
-   * =========================================================
-   */
+  const [latestNotification, setLatestNotification] =
+    useState<Notification | null>(null);
+
   const refresh = useCallback(async () => {
     try {
       const [items, count] = await Promise.all([
@@ -43,31 +41,30 @@ export function useNotifications(category = "all") {
     }
   }, [category]);
 
-  /*
-   * =========================================================
-   * INITIAL LOAD
-   * =========================================================
-   */
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  /*
-   * =========================================================
-   * REALTIME NOTIFICATIONS
-   * =========================================================
-   */
   useEffect(() => {
-    let activeChannel: ReturnType<typeof supabase.channel> | null = null;
+    let cancelled = false;
+    let channel:
+      | ReturnType<typeof supabase.channel>
+      | null = null;
 
     async function setupRealtime() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
 
-      if (!user) return;
+      if (cancelled || !user) {
+        return;
+      }
 
-      const channel = supabase
+      /*
+       * IMPORTANT:
+       * Register the postgres_changes listener BEFORE calling subscribe().
+       */
+      channel = supabase
         .channel(`notifications:${user.id}`)
         .on(
           "postgres_changes",
@@ -77,34 +74,55 @@ export function useNotifications(category = "all") {
             table: "notifications",
             filter: `user_id=eq.${user.id}`,
           },
-          () => {
+          (payload) => {
+            console.log(
+              "[Attend Notifications] New notification:",
+              payload.new
+            );
+
+            const notification =
+              payload.new as Notification;
+
+            setLatestNotification(notification);
+
+            /*
+             * Refresh the normal notification list and
+             * unread count after receiving the realtime event.
+             */
             refresh();
           }
-        )
-        .subscribe((status) => {
-          console.log(
-            "[Attend Notifications] Realtime status:",
-            status
-          );
-        });
+        );
 
-      activeChannel = channel;
+      if (cancelled) {
+        await supabase.removeChannel(channel);
+        channel = null;
+        return;
+      }
+
+      await channel.subscribe((status) => {
+        console.log(
+          "[Attend Notifications] Realtime status:",
+          status
+        );
+      });
     }
 
     setupRealtime();
 
     return () => {
-      if (activeChannel) {
-        supabase.removeChannel(activeChannel);
+      cancelled = true;
+
+      if (channel) {
+        supabase.removeChannel(channel);
+        channel = null;
       }
     };
   }, [supabase, refresh]);
 
-  /*
-   * =========================================================
-   * MARK ONE AS READ
-   * =========================================================
-   */
+  const dismissLatestNotification = useCallback(() => {
+    setLatestNotification(null);
+  }, []);
+
   const markRead = useCallback(
     async (id: string) => {
       try {
@@ -112,7 +130,11 @@ export function useNotifications(category = "all") {
           (item) => item.id === id
         );
 
-        if (!notification || notification.status === "read") {
+        if (!notification) {
+          return;
+        }
+
+        if (notification.status === "read") {
           return;
         }
 
@@ -149,11 +171,6 @@ export function useNotifications(category = "all") {
     [notifications]
   );
 
-  /*
-   * =========================================================
-   * MARK ALL AS READ
-   * =========================================================
-   */
   const markAllRead = useCallback(async () => {
     try {
       if (unreadCount === 0) {
@@ -185,6 +202,8 @@ export function useNotifications(category = "all") {
     notifications,
     unreadCount,
     loading,
+    latestNotification,
+    dismissLatestNotification,
     refresh,
     markRead,
     markAllRead,
