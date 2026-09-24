@@ -6,7 +6,7 @@ export type CampaignEventType =
   | "download"
   | "share";
 
-export type CampaignTrafficSource =
+export type TrafficSource =
   | "discover"
   | "whatsapp"
   | "facebook"
@@ -17,7 +17,7 @@ export type CampaignTrafficSource =
   | "direct"
   | "other";
 
-export const VALID_TRAFFIC_SOURCES: CampaignTrafficSource[] = [
+export const VALID_TRAFFIC_SOURCES: TrafficSource[] = [
   "discover",
   "whatsapp",
   "facebook",
@@ -29,12 +29,14 @@ export const VALID_TRAFFIC_SOURCES: CampaignTrafficSource[] = [
   "other",
 ];
 
-export function getVisitorId(): string {
-  const storageKey = "attend_visitor_id";
+const VISITOR_STORAGE_KEY = "attend_visitor_id";
 
+export function getVisitorId(): string {
   try {
     const existing =
-      window.localStorage.getItem(storageKey);
+      window.localStorage.getItem(
+        VISITOR_STORAGE_KEY
+      );
 
     if (existing) {
       return existing;
@@ -43,7 +45,7 @@ export function getVisitorId(): string {
     const newId = crypto.randomUUID();
 
     window.localStorage.setItem(
-      storageKey,
+      VISITOR_STORAGE_KEY,
       newId
     );
 
@@ -55,7 +57,7 @@ export function getVisitorId(): string {
 
 export function getCampaignTrafficSource(
   campaignId: string
-): CampaignTrafficSource {
+): TrafficSource {
   const storageKey =
     `attend_campaign_source_${campaignId}`;
 
@@ -78,11 +80,11 @@ export function getCampaignTrafficSource(
     if (
       querySource &&
       VALID_TRAFFIC_SOURCES.includes(
-        querySource as CampaignTrafficSource
+        querySource as TrafficSource
       )
     ) {
       const source =
-        querySource as CampaignTrafficSource;
+        querySource as TrafficSource;
 
       window.sessionStorage.setItem(
         storageKey,
@@ -100,13 +102,13 @@ export function getCampaignTrafficSource(
     if (
       savedSource &&
       VALID_TRAFFIC_SOURCES.includes(
-        savedSource as CampaignTrafficSource
+        savedSource as TrafficSource
       )
     ) {
-      return savedSource as CampaignTrafficSource;
+      return savedSource as TrafficSource;
     }
   } catch {
-    // Ignore storage errors.
+    // Ignore browser storage errors.
   }
 
   return "direct";
@@ -117,7 +119,7 @@ export async function trackCampaignEvent(
   campaignId: string,
   visitorId: string,
   eventType: CampaignEventType,
-  trafficSource: CampaignTrafficSource,
+  trafficSource: TrafficSource,
   sharePlatform?: string,
   metadata?: Record<string, unknown>
 ): Promise<void> {
